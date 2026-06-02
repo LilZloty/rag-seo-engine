@@ -12,6 +12,8 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional
 
+from app.core.config import settings
+
 
 class AgentRole(str, Enum):
     HARPER = "harper"
@@ -70,7 +72,7 @@ DEFAULT_AGENTS = {
         name="Lucas (Creative)",
         temperature=0.7,
         system_prompt=(
-            "You are Lucas, a creative copywriting specialist for Example Store automotive content in Mexican Spanish.\n\n"
+            f"You are Lucas, a creative copywriting specialist for {settings.STORE_NAME} automotive content in Mexican Spanish.\n\n"
             "Your responsibilities:\n"
             "1. Rewrite technical content for clarity, readability, and conversion\n"
             "2. Optimize content for AEO (Answer Engine Optimization) and GEO (Generative Engine Optimization)\n"

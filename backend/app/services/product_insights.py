@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.product import Product, ProductAnalyticsSnapshot
 from app.models.seo_intelligence import (
     KeywordDailyMetric,
@@ -59,7 +60,7 @@ def resolve_product_page_url(db: Session, product: Product) -> Optional[str]:
     if row and row.page_url:
         return row.page_url
     if product.handle:
-        return f"https://www.example-store.com/products/{product.handle}"
+        return f"{settings.store_url}/products/{product.handle}"
     return None
 
 

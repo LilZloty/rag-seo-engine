@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 from sqlalchemy.orm import Session
 from app.core.logging import get_logger
+from app.core.config import settings, apply_store_profile
 from app.models.collection_optimizer_models import (
     CollectionOptimizer, 
     CollectionSearchQuery, 
@@ -72,7 +73,7 @@ class CollectionOptimizerService:
                     # Update existing
                     existing.collection_title = collection['title']
                     existing.collection_handle = collection['handle']
-                    existing.collection_url = f"https://example-store.com/collections/{collection['handle']}"
+                    existing.collection_url = f"{settings.store_url}/collections/{collection['handle']}"
                     existing.updated_at = datetime.utcnow()
                     updated_count += 1
                 else:
@@ -81,7 +82,7 @@ class CollectionOptimizerService:
                         shopify_collection_id=collection['id'],
                         collection_handle=collection['handle'],
                         collection_title=collection['title'],
-                        collection_url=f"https://example-store.com/collections/{collection['handle']}",
+                        collection_url=f"{settings.store_url}/collections/{collection['handle']}",
                         category=self._categorize_collection(collection['title']),
                         optimization_status="pending"
                     )
@@ -950,7 +951,7 @@ Queries transaccionales:
                 "no contenido informacional (eso va en blogs). Tu objetivo es maximizar "
                 "conversiones sin canibalizar rankings existentes de blogs y productos."
             ),
-            user_prompt=prompt
+            user_prompt=apply_store_profile(prompt)
         )
 
         return result.get('content', '')
@@ -989,7 +990,7 @@ Requisitos:
             provider = LLMProviderFactory.create(active_provider)
             result = await provider.generate(
                 system_prompt="Eres un experto en atención al cliente para autopartes. Respondes de forma transaccional, no educativa.",
-                user_prompt=prompt
+                user_prompt=apply_store_profile(prompt)
             )
 
             answer = result.get('content', '').strip()

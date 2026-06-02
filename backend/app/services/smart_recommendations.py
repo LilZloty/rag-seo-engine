@@ -17,7 +17,7 @@ from app.models.product import Product
 from app.models.aeo_models import FaultCode
 from app.services.llm_service import llm_service
 from app.services.multi_agent import TaskRouter
-from app.core.config import settings
+from app.core.config import settings, apply_store_profile
 
 logger = logging.getLogger("smart_recommendations")
 
@@ -149,7 +149,7 @@ class SmartRecommendationsService:
                     "gsc_clicks": product.gsc_clicks,
                 },
                 context=[],
-                system_prompt=system_prompt,
+                system_prompt=apply_store_profile(system_prompt),
                 provider=provider,
             )
 

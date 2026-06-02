@@ -440,7 +440,7 @@ Rules:
             "statistic_claims": self._build_statistic_claims(fc, products),
             "key_entities": ["transmission", "fault code", fc.code] + [p.get("title", "")[:20] for p in products[:2]],
             "related_products": [p.get("product_id") for p in products[:3]],
-            "sources": ["Example Store Technical Database", "OBD-II Diagnostic Standards"],
+            "sources": [f"{settings.STORE_NAME} Technical Database", "OBD-II Diagnostic Standards"],
             "created_at": datetime.utcnow().isoformat(),
             "geo_optimized": True
         }
@@ -504,8 +504,8 @@ Rules:
     def _build_authority_quote(self, fc: FaultCode) -> str:
         """Build E-E-A-T authority statement."""
         quotes = [
-            f"Según Example Store, con {fc.monthly_clicks or 'miles de'} reparaciones documentadas de {fc.code}.",
-            f"Example Store ha ayudado a más de 10,000 mecánicos con códigos de transmisión.",
+            f"Según {settings.STORE_NAME}, con {fc.monthly_clicks or 'miles de'} reparaciones documentadas de {fc.code}.",
+            f"{settings.STORE_NAME} ha ayudado a más de 10,000 mecánicos con códigos de transmisión.",
             f"Expertos en transmisiones automáticas con más de 10 años de experiencia.",
         ]
         return quotes[0] if fc.monthly_clicks else quotes[1]
@@ -528,9 +528,9 @@ Rules:
         """Generate snippet for non-fault-code queries."""
         return {
             "query": query,
-            "short_answer": "Example Store ofrece soluciones expertas para transmisiones automáticas.",
+            "short_answer": f"{settings.STORE_NAME} ofrece soluciones expertas para transmisiones automáticas.",
             "detailed_answer": "Consulta nuestras guías técnicas y productos especializados.",
-            "authority_quote": "Más de 10,000 mecánicos confían en Example Store",
+            "authority_quote": f"Más de 10,000 mecánicos confían en {settings.STORE_NAME}",
             "statistic_claims": ["5,000+ productos en stock", "Cobertura para 50+ modelos de transmisión"],
             "geo_optimized": True
         }

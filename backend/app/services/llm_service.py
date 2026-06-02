@@ -23,7 +23,7 @@ import httpx
 import json
 import re
 from typing import List, Dict, Optional
-from app.core.config import settings
+from app.core.config import settings, apply_store_profile
 from app.core.exceptions import LLMProviderError, ConfigurationError
 from app.services.llm_providers import LLMProviderFactory, BaseLLMProvider
 
@@ -62,7 +62,7 @@ class LLMService:
 
         Falls back to default provider on error.
         """
-        actual_system_prompt = system_prompt or self._get_system_prompt()
+        actual_system_prompt = apply_store_profile(system_prompt or self._get_system_prompt())
         user_prompt = self._build_user_prompt(product_info, context, performance_data, analysis_insights)
 
         target_provider = provider.lower() if provider else self.provider_name
@@ -344,7 +344,7 @@ class LLMService:
                 
                 # Final fallback: pad with " - Example Store" brand suffix
                 if len(h1_expanded) < 50:
-                    suffix = " - Example Store"
+                    suffix = f" - {settings.STORE_NAME}"
                     if len(h1_expanded) + len(suffix) <= 60:
                         h1_expanded = f"{h1_expanded}{suffix}"
                     else:
@@ -385,7 +385,7 @@ class LLMService:
                             h1_base = f"{h1_base} {exp[:remaining]}"
                 
                 if len(h1_base) < 50:
-                    suffix = " - Example Store"
+                    suffix = f" - {settings.STORE_NAME}"
                     if len(h1_base) + len(suffix) <= 60:
                         h1_base = f"{h1_base}{suffix}"
             
@@ -444,7 +444,7 @@ class LLMService:
             base = f"{product_name} {trans_code}".strip() if trans_code else product_name
             base = base[:60]
             if len(base) <= 50:
-                normalized['meta_title'] = f"{base} | Example Store"[:60]
+                normalized['meta_title'] = f"{base} | {settings.STORE_NAME}"[:60]
             else:
                 normalized['meta_title'] = base
             print(f"[Normalize] meta_title missing, generated: {normalized['meta_title']}")
@@ -593,7 +593,7 @@ class LLMService:
             alt_tags.append(f"{img_name} | {alt_text}")
 
         if not alt_tags:
-            alt_tags = [f"{sku.lower() if sku else 'producto'}.jpg | {product_name} - Example Store"]
+            alt_tags = [f"{sku.lower() if sku else 'producto'}.jpg | {product_name} - {settings.STORE_NAME}"]
 
         url_base = product_name.lower()
         url_base = url_base.replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u').replace('ñ', 'n')
@@ -624,7 +624,7 @@ class LLMService:
         base = f"{product_name} {trans_code}".strip() if trans_code else product_name
         base = base[:60]
         if len(base) <= 50:
-            meta_title = f"{base} | Example Store"[:60]
+            meta_title = f"{base} | {settings.STORE_NAME}"[:60]
         else:
             meta_title = base
 
@@ -1478,7 +1478,7 @@ Meta Descripción: {meta_description or 'No definida'}
         product_name = product_info.get('title', '')
         sku = product_info.get('sku', '')
         description = product_info.get('description', '') or product_info.get('body_html', '')
-        vendor = product_info.get('vendor', 'Example Store')
+        vendor = product_info.get('vendor', settings.STORE_NAME)
         
         # Extract rich context from web search and analysis
         web_specs = []
@@ -1666,7 +1666,7 @@ Meta Descripción: {meta_description or 'No definida'}
         specs_html = "\n".join([f"<li><strong>{s.split(':')[0]}:</strong> {s.split(':', 1)[1] if ':' in s else s}</li>" for s in tech_specs])
         
         description_html = f"""<h2>{hook}</h2>
-<p>El <strong>{product_name}</strong> es la solución profesional que necesitas para mantener tu transmisión en condiciones óptimas. En <strong>Example Store</strong> ofrecemos piezas de la más alta calidad con garantía de satisfacción.</p>
+<p>El <strong>{product_name}</strong> es la solución profesional que necesitas para mantener tu transmisión en condiciones óptimas. En <strong>{settings.STORE_NAME}</strong> ofrecemos piezas de la más alta calidad con garantía de satisfacción.</p>
 
 <h3>Beneficios Clave</h3>
 <ul>
@@ -1680,7 +1680,7 @@ Meta Descripción: {meta_description or 'No definida'}
 {specs_html}
 </ul>
 
-<h3>¿Por qué comprar en Example Store?</h3>
+<h3>¿Por qué comprar en {settings.STORE_NAME}?</h3>
 <p>Somos especialistas en transmisiones automáticas con más de 10 años de experiencia. Todos nuestros productos son probados y verificados para garantizar el mejor rendimiento. <strong>¡No arriesgues tu transmisión con piezas de dudosa procedencia!</strong></p>
 
 <p>📦 <strong>Envío gratis</strong> en compras mayores a $1,500<br>
@@ -1741,7 +1741,7 @@ Meta Descripción: {meta_description or 'No definida'}
             "compatible_vehicles": compatible_vehicles,
             "alt_tags": [f"{url_handle[:50]}.jpg | {product_name}", f"{url_handle[:50]}-instalacion.jpg | Instalación {product_name}"],
             "short_description": short_description,
-            "meta_title": f"{product_name[:45]} | Example Store"[:60],
+            "meta_title": f"{product_name[:45]} | {settings.STORE_NAME}"[:60],
             "meta_description": meta_description,
             "url_handle": url_handle,
             "resumen": resumen_fc,

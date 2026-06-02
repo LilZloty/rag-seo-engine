@@ -32,6 +32,7 @@ from app.models.aeo_models import (
 )
 from app.services.shopify_service import shopify_service, TTLCache
 from app.services.aeo import LLMSTxtBuilder, SchemaGenerator, KnowledgeGraphManager
+from app.core.config import settings
 
 logger = logging.getLogger("aeo_service")
 
@@ -456,7 +457,7 @@ class LLMSTxtBuilder:
     def build_authority_section(self) -> 'LLMSTxtBuilder':
         """Build authority signals section for GEO"""
         if hasattr(self.config, 'authority_statement') and self.config.authority_statement:
-            self.lines.append("\n## Acerca de Example Store\n")
+            self.lines.append(f"\n## Acerca de {settings.STORE_NAME}\n")
             self.lines.append(f"> {self.config.authority_statement}\n")
         return self
     
@@ -579,13 +580,13 @@ class SchemaGenerator:
             "description": description,
             "author": {
                 "@type": "Person",
-                "name": author.get('name', 'Example Store Technical Team'),
+                "name": author.get('name', f'{settings.STORE_NAME} Technical Team'),
                 "jobTitle": author.get('title', 'Transmission Specialist')
             },
             "publisher": {
                 "@type": "Organization",
-                "name": "Example Store",
-                "url": "https://example-store.com"
+                "name": settings.STORE_NAME,
+                "url": settings.store_url
             }
         }
         

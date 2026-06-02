@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings
 from typing import Optional, List, Literal
+from urllib.parse import urlparse
 import os
 
 
@@ -106,6 +107,19 @@ class Settings(BaseSettings):
     EMBEDDING_PROVIDER: str = "openai"  # Options: "openai", "ollama"
     EMBEDDING_MODEL: str = "text-embedding-3-small"
     
+    # ──────────────────────────────────────────────────────────────
+    # Store / brand profile — per-deployment customization.
+    # Each store overrides these in .env; defaults are generic placeholders.
+    # ──────────────────────────────────────────────────────────────
+    STORE_NAME: str = "Example Store"
+    STORE_URL: str = "https://www.example-store.com"   # canonical storefront base (no trailing slash)
+    STORE_SUPPORT_EMAIL: str = "soporte@example-store.com"
+    STORE_PHONE: str = "+52 55 XXXX XXXX"
+    STORE_YOUTUBE_URL: str = "https://www.youtube.com/@examplestore"
+    # Extra brand aliases (comma-separated) for brand-mention detection; the
+    # store name and domain are added automatically.
+    STORE_BRAND_ALIASES: str = ""
+
     # Shopify Integration
     SHOPIFY_STORE: str = "your-store.myshopify.com"
     SHOPIFY_ACCESS_TOKEN: str = ""
@@ -173,6 +187,32 @@ class Settings(BaseSettings):
         """Uvicorn worker count."""
         return {"development": 1, "staging": 2, "production": 4}[self.ENVIRONMENT]
 
+    @property
+    def store_url(self) -> str:
+        """Canonical storefront base URL, without trailing slash."""
+        return self.STORE_URL.rstrip("/")
+
+    @property
+    def store_domain(self) -> str:
+        """Bare host of the storefront, e.g. 'www.example-store.com'."""
+        return urlparse(self.STORE_URL).netloc
+
+    @property
+    def store_org_id(self) -> str:
+        """Schema.org @id for the store Organization entity."""
+        return f"{self.store_url}/#organization"
+
+    @property
+    def store_brand_aliases(self) -> List[str]:
+        """Lowercased brand aliases for mention detection (name + domain + extras)."""
+        host = self.store_domain.lower()
+        aliases = {self.STORE_NAME.lower(), host, host.replace("www.", "")}
+        for extra in self.STORE_BRAND_ALIASES.split(","):
+            extra = extra.strip().lower()
+            if extra:
+                aliases.add(extra)
+        return sorted(a for a in aliases if a)
+
     class Config:
         env_file = ".env"
         case_sensitive = True
@@ -180,4 +220,23 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def apply_store_profile(text: str) -> str:
+    """Swap generic placeholder brand tokens in a string for the configured store
+    profile. Use for large blobs (LLM system prompts) that contain literal ``{ }``
+    and therefore can't go through ``str.format()``/f-strings."""
+    if not text:
+        return text
+    yt = settings.STORE_YOUTUBE_URL or "https://www.youtube.com/@examplestore"
+    yt_bare = yt.replace("https://", "").replace("http://", "")
+    return (
+        text
+        .replace("https://www.example-store.com", settings.store_url)
+        .replace("https://example-store.com", settings.store_url)
+        .replace("https://www.youtube.com/@examplestore", yt)
+        .replace("youtube.com/@examplestore", yt_bare)
+        .replace("example-store.com", settings.store_domain)
+        .replace("Example Store", settings.STORE_NAME)
+    )
 

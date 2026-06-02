@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product
 from app.models.aeo_models import FaultCode
+from app.core.config import settings
 
 logger = logging.getLogger("schema_generator")
 
@@ -28,7 +29,7 @@ class SchemaGenerator:
     
     def __init__(self, db: Session):
         self.db = db
-        self.base_url = "https://example-store.com"
+        self.base_url = settings.store_url
     
     async def generate_schema(
         self,
@@ -230,7 +231,7 @@ class SchemaGenerator:
                 "sku": p.sku,
                 "brand": {
                     "@type": "Brand",
-                    "name": "Example Store"
+                    "name": settings.STORE_NAME
                 },
                 "offers": {
                     "@type": "Offer",
@@ -240,7 +241,7 @@ class SchemaGenerator:
                     "availability": "https://schema.org/InStock" if (p.inventory_quantity or 0) > 0 else "https://schema.org/OutOfStock",
                     "seller": {
                         "@type": "Organization",
-                        "name": "Example Store"
+                        "name": settings.STORE_NAME
                     }
                 }
             }
@@ -335,12 +336,12 @@ class SchemaGenerator:
             "description": fc.description if fc else "Guía técnica para reparación de transmisiones automáticas.",
             "author": {
                 "@type": "Organization",
-                "name": "Example Store",
+                "name": settings.STORE_NAME,
                 "url": self.base_url
             },
             "publisher": {
                 "@type": "Organization",
-                "name": "Example Store",
+                "name": settings.STORE_NAME,
                 "logo": {
                     "@type": "ImageObject",
                     "url": f"{self.base_url}/logo.png"

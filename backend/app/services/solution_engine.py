@@ -12,6 +12,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
+from app.core.config import settings
 
 from app.models.product import Product
 from app.models.aeo_models import FaultCode
@@ -259,7 +260,7 @@ class SolutionEngine:
                 "query": query,
                 "short_answer": "Learn more about this topic on our site.",
                 "detailed_answer": "We have comprehensive guides to help you.",
-                "authority_quote": "Example Store - Especialistas en Transmisiones"
+                "authority_quote": f"{settings.STORE_NAME} - Especialistas en Transmisiones"
             }
         
         fc = self.db.query(FaultCode).filter(FaultCode.code == fault_code).first()
@@ -269,7 +270,7 @@ class SolutionEngine:
                 "query": query,
                 "short_answer": f"{fault_code} is a transmission fault code.",
                 "detailed_answer": f"Learn more about {fault_code} and how to fix it.",
-                "authority_quote": "Example Store - Más de 10,000 mecánicos ayudados"
+                "authority_quote": f"{settings.STORE_NAME} - Más de 10,000 mecánicos ayudados"
             }
         
         # Get products
@@ -302,7 +303,7 @@ Productos recomendados:
             "fault_code": fault_code,
             "short_answer": short_answer[:300],
             "detailed_answer": detailed_answer,
-            "authority_quote": f"Example Store - {fc.monthly_clicks or 0}+ búsquedas mensuales sobre este código. Expertos en transmisiones.",
+            "authority_quote": f"{settings.STORE_NAME} - {fc.monthly_clicks or 0}+ búsquedas mensuales sobre este código. Expertos en transmisiones.",
             "statistic_claims": [
                 f"{products[0]['total_sold']}+ unidades vendidas" if products and products[0]['total_sold'] else "Producto recomendado por expertos",
                 f"Compatible con {', '.join(fc.transmissions or [])}" if fc.transmissions else ""

@@ -33,11 +33,7 @@ logger = get_logger(__name__)
 
 
 # Brand and competitor detection keywords
-BRAND_KEYWORDS = [
-    "example-store", "example store", "example-store",
-    "example-store.com", "www.example-store.com",
-    "example store mexico", "example-store méxico"
-]
+BRAND_KEYWORDS = settings.store_brand_aliases
 
 COMPETITOR_KEYWORDS = [
     "transgo", "sonnax", "alto products", "alto",
@@ -47,7 +43,7 @@ COMPETITOR_KEYWORDS = [
 ]
 
 # URL patterns to detect
-BRAND_URL_PATTERN = re.compile(r'example-store\.com[^\s]*', re.IGNORECASE)
+BRAND_URL_PATTERN = re.compile(re.escape(settings.store_domain.replace("www.", "")) + r'[^\s]*', re.IGNORECASE)
 
 
 class AIVisibilityService:
@@ -384,7 +380,7 @@ brand names, and website URLs where applicable. Focus on the Mexican/Latin Ameri
         
         # Add Example Store to mentioned brands if found
         if brand_mentioned:
-            mentioned_brands.insert(0, "Example Store")
+            mentioned_brands.insert(0, settings.STORE_NAME)
         
         # Product detection (basic - could be enhanced with actual catalog)
         product_keywords = [

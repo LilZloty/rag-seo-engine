@@ -14,6 +14,7 @@ import json
 import logging
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime
+from app.core.config import settings
 
 from sqlalchemy.orm import Session
 
@@ -116,7 +117,7 @@ class ShopifySchemaService:
             schemas.append(howto_schema)
         
         # Build HTML block (used for both injection methods)
-        schema_html = '\n<!-- GEO: Auto-generated structured data by Example Store AEO System -->\n'
+        schema_html = f'\n<!-- GEO: Auto-generated structured data by {settings.STORE_NAME} AEO System -->\n'
         for schema in schemas:
             schema_html += f'<script type="application/ld+json">\n{json.dumps(schema, indent=2, ensure_ascii=False)}\n</script>\n'
         schema_html += '<!-- /GEO -->\n'

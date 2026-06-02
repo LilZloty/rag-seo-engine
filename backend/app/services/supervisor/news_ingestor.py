@@ -22,7 +22,7 @@ import httpx
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 
-from app.core.config import settings
+from app.core.config import settings, apply_store_profile
 from app.core.logging import get_logger
 from app.models.supervisor_models import NewsItem, SupervisorRun
 from app.services.supervisor.sources import get_sources
@@ -390,7 +390,7 @@ async def _summarize_batch_via_grok(
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SUMMARIZE_SYSTEM},
+            {"role": "system", "content": apply_store_profile(SUMMARIZE_SYSTEM)},
             {"role": "user", "content": _build_summarize_user_prompt(batch)},
         ],
         "temperature": 0.2,

@@ -15,6 +15,7 @@ from sqlalchemy import desc
 
 from app.models.product import Product
 from app.models.aeo_models import FaultCode
+from app.core.config import settings
 
 logger = logging.getLogger("collection_manager")
 
@@ -32,7 +33,7 @@ class CollectionManager:
     
     def __init__(self, db: Session):
         self.db = db
-        self.base_url = "https://example-store.com"
+        self.base_url = settings.store_url
     
     async def create_fault_code_collection(self, fault_code: str) -> Dict:
         """
@@ -250,8 +251,8 @@ class CollectionManager:
         """Generate SEO meta title."""
         transmissions = fc.transmissions or []
         if transmissions:
-            return f"Kits {fc.code} {transmissions[0]} | Refacciones {fc.name} - Example Store"
-        return f"Kits {fc.code} | Refacciones y Soluciones - Example Store"
+            return f"Kits {fc.code} {transmissions[0]} | Refacciones {fc.name} - {settings.STORE_NAME}"
+        return f"Kits {fc.code} | Refacciones y Soluciones - {settings.STORE_NAME}"
     
     def _generate_meta_description(self, fc: FaultCode, products: List[Product]) -> str:
         """Generate SEO meta description."""

@@ -11,6 +11,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from app.core.config import settings
 
 from app.models.product import Product
 from app.models.aeo_models import FaultCode
@@ -387,7 +388,7 @@ Respond ONLY with valid JSON matching the requested format."""
             
             sections.append({
                 "heading": f"Productos Recomendados para Solucionar {fc.code}",
-                "content": f"""<p>En Example Store tenemos los productos específicos para resolver el código {fc.code}. Estas son nuestras recomendaciones basadas en la experiencia de miles de mecánicos:</p>
+                "content": f"""<p>En {settings.STORE_NAME} tenemos los productos específicos para resolver el código {fc.code}. Estas son nuestras recomendaciones basadas en la experiencia de miles de mecánicos:</p>
 
 {product_html}
 
@@ -403,11 +404,11 @@ Respond ONLY with valid JSON matching the requested format."""
 <p><strong>Contáctanos:</strong></p>
 <ul>
 <li>WhatsApp: +52 55 XXXX XXXX</li>
-<li>Email: soporte@example-store.com</li>
+<li>Email: {settings.STORE_SUPPORT_EMAIL}</li>
 <li>Teléfono: +52 55 XXXX XXXX</li>
 </ul>
 
-<p>En Example Store hemos ayudado a más de 10,000 mecánicos en México. ¡Confía en los expertos!</p>""",
+<p>En {settings.STORE_NAME} hemos ayudado a más de 10,000 mecánicos en México. ¡Confía en los expertos!</p>""",
             "type": "cta"
         })
         
@@ -421,7 +422,7 @@ Respond ONLY with valid JSON matching the requested format."""
         titles = [
             f"Código {fc.code}: {fc.name} - Guía de Diagnóstico y Solución [{transmission_str}]",
             f"{fc.code} {transmission_str}: Causas, Síntomas y Cómo Repararlo",
-            f"Código de Falla {fc.code} - Todo lo que Necesitas Saber | Example Store"
+            f"Código de Falla {fc.code} - Todo lo que Necesitas Saber | {settings.STORE_NAME}"
         ]
         
         # Pick based on traffic
@@ -490,21 +491,21 @@ Respond ONLY with valid JSON matching the requested format."""
                 "position": 1,
                 "name": "Identificar el código de falla",
                 "text": f"Conecta el escáner OBDII y confirma que el código presente es {fc.code}.",
-                "url": f"https://example-store.com/blogs/news/{fc.code.lower()}#step1"
+                "url": f"{settings.store_url}/blogs/news/{fc.code.lower()}#step1"
             },
             {
                 "@type": "HowToStep",
                 "position": 2,
                 "name": "Verificar síntomas",
                 "text": "Revisa que los síntomas coincidan con los descritos en la guía técnica.",
-                "url": f"https://example-store.com/blogs/news/{fc.code.lower()}#step2"
+                "url": f"{settings.store_url}/blogs/news/{fc.code.lower()}#step2"
             },
             {
                 "@type": "HowToStep",
                 "position": 3,
                 "name": "Diagnosticar la causa",
                 "text": f"Las causas más comunes de {fc.code} son: " + ", ".join((fc.common_causes or [])[:2]) + ".",
-                "url": f"https://example-store.com/blogs/news/{fc.code.lower()}#step3"
+                "url": f"{settings.store_url}/blogs/news/{fc.code.lower()}#step3"
             }
         ]
         
@@ -514,7 +515,7 @@ Respond ONLY with valid JSON matching the requested format."""
                 "position": 4,
                 "name": "Reemplazar las piezas defectuosas",
                 "text": f"Instala el producto recomendado: {products[0].title}.",
-                "url": f"https://example-store.com/blogs/news/{fc.code.lower()}#step4"
+                "url": f"{settings.store_url}/blogs/news/{fc.code.lower()}#step4"
             })
         
         return {

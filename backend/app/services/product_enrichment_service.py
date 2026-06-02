@@ -34,6 +34,8 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from app.core.config import apply_store_profile
+
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -245,7 +247,7 @@ class ProductEnrichmentService:
         user_prompt = self._build_user_prompt(context)
 
         response = await self.grok.generate(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=apply_store_profile(SYSTEM_PROMPT),
             user_prompt=user_prompt,
             json_mode=True,
             temperature=0.3,

@@ -518,7 +518,7 @@ function InsightsPanel({ state }: { state: InsightsState | undefined }) {
                                 <div className="space-y-0.5">
                                     {c.competing_pages.map((p, j) => (
                                         <div key={j} className="text-[#888888] truncate" title={p.page_url}>
-                                            <span className="text-[#666666]">→</span> {p.page_url.replace('https://www.example-store.com', '')} <span className="text-[#555555]">(pos {p.position.toFixed(1)}{p.page_type ? `, ${p.page_type}` : ''})</span>
+                                            <span className="text-[#666666]">→</span> {p.page_url.replace(process.env.NEXT_PUBLIC_STORE_URL || 'https://www.example-store.com', '')} <span className="text-[#555555]">(pos {p.position.toFixed(1)}{p.page_type ? `, ${p.page_type}` : ''})</span>
                                         </div>
                                     ))}
                                 </div>

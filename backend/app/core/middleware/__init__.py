@@ -86,7 +86,7 @@ class ExceptionHandlingMiddleware(BaseHTTPMiddleware):
             
         except AppException as e:
             logger.warning(
-                f"Example Store exception: {e.code} - {e.message}",
+                f"Application exception: {e.code} - {e.message}",
                 extra={
                     "request_id": getattr(request.state, "request_id", "unknown"),
                     "code": e.code,

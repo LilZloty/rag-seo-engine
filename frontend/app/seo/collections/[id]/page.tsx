@@ -255,7 +255,7 @@ export default function CollectionDetailPage() {
 
     if (!collection) return null;
 
-    const shopifyUrl = `https://example-store.com/collections/${collection.handle}`;
+    const shopifyUrl = `${process.env.NEXT_PUBLIC_STORE_URL || 'https://www.example-store.com'}/collections/${collection.handle}`;
 
     return (
         <div className="min-h-screen bg-[#0a0a0a] text-white">

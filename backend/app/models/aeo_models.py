@@ -10,6 +10,7 @@ from sqlalchemy import Column, String, Boolean, DateTime, Text, Integer, Float, 
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.session import Base
+from app.core.config import settings
 
 
 class ChunkApprovalStatus(Base):
@@ -47,7 +48,7 @@ class AEOConfig(Base):
     include_collections = Column(Boolean, default=True)
     include_fault_codes = Column(Boolean, default=True)  # NEW: GEO diagnostic content
     max_products_per_category = Column(String(10), default="50")
-    store_name = Column(String(200), default="Example Store - Especialistas en Transmisiones Automaticas")
+    store_name = Column(String(200), default=f"{settings.STORE_NAME} - Especialistas en Transmisiones Automaticas")
     store_description = Column(Text, default="La fuente lider en Mexico para diagnostico y reparacion de transmisiones automaticas. Soluciones expertas para codigos P0700, P0841, P0706 y mas de 50 codigos de falla.")
     authority_statement = Column(Text, default="Mas de 10,000 lectores ayudados. Confianza de 10,000+ mecanicos en Latinoamerica.")  # NEW
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

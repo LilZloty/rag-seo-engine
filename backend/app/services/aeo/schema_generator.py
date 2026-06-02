@@ -10,6 +10,7 @@ Generates structured data for:
 
 from typing import List, Dict, Optional
 from app.core.logging import get_logger
+from app.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -142,7 +143,7 @@ class SchemaGenerator:
         estimated_time: Optional[str] = None,
         image_url: Optional[str] = None,
         url: Optional[str] = None,
-        author_name: str = "Example Store Technical Team",
+        author_name: str = f"{settings.STORE_NAME} Technical Team",
         author_title: str = "Transmission Specialist"
     ) -> Dict:
         """
@@ -204,10 +205,10 @@ class SchemaGenerator:
     def article(
         title: str,
         description: str,
-        author_name: str = "Equipo Técnico Example Store",
+        author_name: str = f"Equipo Técnico {settings.STORE_NAME}",
         author_title: str = "Transmission Specialist",
-        publisher_name: str = "Example Store",
-        publisher_url: str = "https://example-store.com",
+        publisher_name: str = settings.STORE_NAME,
+        publisher_url: str = settings.store_url,
         published_date: Optional[str] = None,
         modified_date: Optional[str] = None,
         image_url: Optional[str] = None,
@@ -424,7 +425,7 @@ def generate_combined_product_schema(
     image_url = product_data.get('image_url', '')
     oem_refs = product_data.get('oem_references', [])
     
-    base_url = "https://www.example-store.com"
+    base_url = settings.store_url
     product_url = f"{base_url}/products/{handle}" if handle else ""
     product_id = f"{base_url}/products/{handle}#product" if handle else ""
     
@@ -463,7 +464,7 @@ def generate_combined_product_schema(
                 "step": steps,
                 "author": {
                     "@type": "Organization",
-                    "name": "Example Store",
+                    "name": settings.STORE_NAME,
                     "url": base_url
                 }
             }

@@ -22,7 +22,7 @@ from app.services.multi_agent import TaskRouter
 from app.services.collection_cannibalization_guard import (
     CollectionCannibalizationGuard, CannibalizationCheckResult
 )
-from app.core.config import settings
+from app.core.config import settings, apply_store_profile
 
 # Reuse product recommendation models (same structure)
 from app.services.smart_recommendations import (
@@ -99,7 +99,7 @@ class CollectionSmartRecommendationsService:
         prompt = self._build_collection_recommendation_prompt(
             collection, top_queries, cannibal_result, filters
         )
-        system_prompt = self._get_collection_system_prompt()
+        system_prompt = apply_store_profile(self._get_collection_system_prompt())
 
         # Route to appropriate provider
         provider = self.router.route("collection_recommendation_engine", multi_agent)

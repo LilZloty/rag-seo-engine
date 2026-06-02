@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
 from app.core.logging import get_logger
+from app.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -242,9 +243,9 @@ class ResponseNormalizer:
             )
             trans_code = trans_match.group(0) if trans_match else ''
             if trans_code:
-                normalized['meta_title'] = f"{self.product_name[:45]} {trans_code} | Example Store"[:70]
+                normalized['meta_title'] = f"{self.product_name[:45]} {trans_code} | {settings.STORE_NAME}"[:70]
             else:
-                normalized['meta_title'] = f"{self.product_name[:50]} | Example Store"[:70]
+                normalized['meta_title'] = f"{self.product_name[:50]} | {settings.STORE_NAME}"[:70]
             logger.debug(f"meta_title missing, generated")
         
         # Generate meta_description if missing
@@ -309,7 +310,7 @@ class ResponseNormalizer:
             description_html = existing_description if existing_description.startswith('<') else f"<p>{existing_description}</p>"
         else:
             description_html = f"""<h2>¿Por qué elegir {self.product_name}?</h2>
-<p>El <strong>{self.product_name}</strong> es la elección ideal para mantener tu transmisión automática en óptimas condiciones. En <strong>Example Store</strong> garantizamos calidad OEM y el mejor precio del mercado.</p>
+<p>El <strong>{self.product_name}</strong> es la elección ideal para mantener tu transmisión automática en óptimas condiciones. En <strong>{settings.STORE_NAME}</strong> garantizamos calidad OEM y el mejor precio del mercado.</p>
 <h3>Especificaciones</h3>
 <ul>
 <li><strong>Marca:</strong> {self.vendor}</li>
@@ -324,7 +325,7 @@ class ResponseNormalizer:
             img_name = img if isinstance(img, str) else str(img)
             alt_tags.append(f"{img_name} | {self.product_name} - {self.vendor} - Vista {i+1}")
         if not alt_tags:
-            alt_tags = [f"{product_slug[:50]}-vista-1.jpg | {self.product_name} - Example Store"]
+            alt_tags = [f"{product_slug[:50]}-vista-1.jpg | {self.product_name} - {settings.STORE_NAME}"]
         
         # Generate SEO-optimized URL handle from product name
         url_handle = self._generate_seo_url_handle(self.product_name, self.product_name)
@@ -333,7 +334,7 @@ class ResponseNormalizer:
             h1_title=self.product_name[:60] if len(self.product_name) > 60 else self.product_name,
             description_html=description_html,
             short_description=f"{self.product_name}. {self.vendor}. Garantía 1 año. Envío express México."[:160],
-            meta_title=f"{self.product_name[:55]} | Example Store"[:70],
+            meta_title=f"{self.product_name[:55]} | {settings.STORE_NAME}"[:70],
             meta_description=f"{self.product_name[:80]}. {self.vendor}. Garantía 1 año. Envío express 1-2 días México."[:160],
             url_handle=url_handle,
             alt_tags=alt_tags,

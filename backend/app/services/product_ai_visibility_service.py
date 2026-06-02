@@ -49,11 +49,8 @@ COMPETITOR_BRANDS = [
     "valeo", "exedy", "aisin"
 ]
 
-# Brand keywords for Example Store
-BRAND_KEYWORDS = [
-    "example-store", "example store", "example-store",
-    "example-store.com", "www.example-store.com"
-]
+# Brand keywords (derived from the configured store profile)
+BRAND_KEYWORDS = settings.store_brand_aliases
 
 # Prompt templates for different query types (LEGACY - kept for backward compatibility)
 PROMPT_TEMPLATES = {
@@ -697,7 +694,7 @@ class ProductAIVisibilityService:
             # Generate prompts for top competitors
             for competitor, count in competitor_counts.most_common(2):
                 prompts.append({
-                    "prompt_text": f"¿Qué es mejor para {product_type}: {competitor.title()} o Example Store? ¿Cuál tiene mejor calidad y precio en México?",
+                    "prompt_text": f"¿Qué es mejor para {product_type}: {competitor.title()} o {settings.STORE_NAME}? ¿Cuál tiene mejor calidad y precio en México?",
                     "prompt_type": "competitive",
                     "source": "competitor_history",
                     "competitor": competitor,

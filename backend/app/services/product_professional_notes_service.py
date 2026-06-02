@@ -29,6 +29,8 @@ import re
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
+
+from app.core.config import apply_store_profile
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
@@ -117,7 +119,7 @@ async def generate_professional_notes(
     grok = GrokProvider()
     try:
         response = await grok.generate(
-            system_prompt=GROK_SYSTEM_PROMPT,
+            system_prompt=apply_store_profile(GROK_SYSTEM_PROMPT),
             user_prompt=_build_user_prompt(product, fault_code_codes),
             json_mode=True,
             temperature=0.2,

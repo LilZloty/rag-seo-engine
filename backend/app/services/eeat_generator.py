@@ -11,6 +11,8 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.core.config import settings
+
 logger = logging.getLogger("eeat_generator")
 
 
@@ -145,9 +147,9 @@ class EEATAuthorityGenerator:
         ])
         
         return f'''<div class="eeat-authority-box" itemscope itemtype="https://schema.org/Organization">
-    <meta itemprop="name" content="Example Store" />
-    <meta itemprop="url" content="https://example-store.com" />
-    <meta itemprop="@id" content="https://example-store.com/#organization" />
+    <meta itemprop="name" content="{settings.STORE_NAME}" />
+    <meta itemprop="url" content="{settings.store_url}" />
+    <meta itemprop="@id" content="{settings.store_org_id}" />
     
     <div class="eeat-badge">{badge}</div>
     <h3 class="eeat-title">{title}</h3>
@@ -169,7 +171,7 @@ class EEATAuthorityGenerator:
     </div>
     
     <div class="eeat-cta">
-        <p>📞 ¿Dudas? Habla con un experto: <strong>55-XXXX-XXXX</strong></p>
+        <p>📞 ¿Dudas? Habla con un experto: <strong>{settings.STORE_PHONE}</strong></p>
         <p class="eeat-hours">Horario: Lunes a Viernes 9:00 - 18:00</p>
     </div>
 </div>'''
@@ -201,9 +203,9 @@ class EEATAuthorityGenerator:
     # areaServed, knowsAbout, customers_served, years_experience.
     # Excluded: warranty/success_rate/support_hours/response_time/products_count
     # (the last is stale — actual catalog is 5000+ SKUs, not 850+).
-    ORG_NAME = "Example Store"
-    ORG_URL = "https://example-store.com"
-    ORG_ID = "https://example-store.com/#organization"
+    ORG_NAME = settings.STORE_NAME
+    ORG_URL = settings.store_url
+    ORG_ID = settings.store_org_id
     ORG_AREA_SERVED = "Mexico"
     ORG_KNOWS_ABOUT = [
         "Transmisiones automáticas",

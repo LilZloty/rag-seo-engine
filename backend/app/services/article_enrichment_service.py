@@ -28,6 +28,8 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 
 from pydantic import BaseModel, Field, validator
+
+from app.core.config import apply_store_profile
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
@@ -318,7 +320,7 @@ class ArticleEnrichmentService:
         user_prompt = self._build_user_prompt(article, keyword, context)
 
         response = await self.grok.generate(
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=apply_store_profile(SYSTEM_PROMPT),
             user_prompt=user_prompt,
             json_mode=True,
             temperature=0.3,

@@ -33,7 +33,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-v07-surface">
       {!isSplash && (
         <Header
-          title="Example Store"
+          title={process.env.NEXT_PUBLIC_STORE_NAME || "Example Store"}
           subtitle="SEO Engine"
           darkMode={darkMode}
           onToggleTheme={() => setDarkMode(!darkMode)}
