@@ -1,8 +1,8 @@
 # RAG SEO Engine
 
-An AI-powered **SEO / AEO / GEO** platform for a ~5,000-SKU automotive transmission-parts retailer. It generates Shopify-native product content with a retrieval-augmented (RAG) pipeline, then ties every change to **measurable organic impact** — not just SEO-score movement.
+An AI-powered **SEO / AEO / GEO** platform for Shopify catalogs. It generates product content with a retrieval-augmented (RAG) pipeline, then ties every change to **measurable organic impact** — not just SEO-score movement. It was built end to end for a ~5,000-SKU automotive transmission-parts retailer, but the pipelines are domain-agnostic — keep the structure and adapt it to your own industry.
 
-> **Portfolio note.** This is a sanitized public snapshot of a production system I designed and built end to end for a Mexican automotive transmission-parts retailer (selling on Shopify, Mercado Libre and B2B). Secrets, credentials, brand identifiers and real business data have been removed — all configuration uses placeholders (`backend/.env.example`) and it runs against your own store/data.
+> **Portfolio note.** This is a sanitized public snapshot of a production system I designed and built end to end for a Mexican automotive transmission-parts retailer (selling on Shopify, Mercado Libre and B2B). Secrets, credentials, brand identifiers and real business data have been removed — all configuration uses placeholders (`backend/.env.example`) and it runs against your own store, catalog and industry.
 
 ## What I built
 
@@ -93,6 +93,17 @@ graph TD
 - **Collection Intelligence** — keyword-cannibalization guard between blog posts and collections, plus multi-agent structure recommendations.
 - **Solution Engine** — symptom / fault-code → ranked parts + a structured diagnostic path.
 - **Shopify integration** — two-way product & metafield sync, automatic 301 redirects on handle changes, incremental order sync via `order_line_items`.
+
+## Adapting it to your own catalog
+
+It was built for an automotive transmission-parts store, but nothing about the **pipelines** is automotive-specific — RAG content generation, SEO-impact scoring, the AEO/GEO layer, Shopify sync and analytics all work for any product catalog. To retarget it to another store or industry you keep the structure and change four things, no core-code edits:
+
+1. **Store profile** — set `STORE_NAME`, `STORE_URL`, contact and brand fields in `backend/.env` (and `NEXT_PUBLIC_STORE_*` for the dashboard). Storefront URLs, schema.org identity and brand-mention detection all derive from these.
+2. **Knowledge base** — re-seed the RAG libraries with your own product / technical documents (the LLM only writes from what it can retrieve).
+3. **Brand voice** — adjust the system prompts to your tone, language and policies.
+4. **Domain taxonomy** — swap the automotive specifics (transmission fault codes, `VehiclePart` schema, product types) for your vertical's categories and JSON-LD types.
+
+Single-tenant by design: one configured instance per store.
 
 ## Tech stack
 
