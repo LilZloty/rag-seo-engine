@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.sqlite3
+.pytest_cache/
+.mypy_cache/
+tests/
+migrate_*.py
+scripts/
+*.bat
+*.md
+.env.example

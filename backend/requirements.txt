@@ -1,0 +1,67 @@
+# RAG SEO Engine - API Image Dependencies (light)
+#
+# This file is what the FastAPI image installs. It does NOT include crawl4ai
+# or Playwright — those are kept in requirements-crawler.txt and installed
+# only into the crawler-worker image.
+#
+# Code that wants to scrape URLs goes through DocumentIngestionService, which
+# catches ImportError and falls back to httpx+BeautifulSoup for static pages.
+# Dynamic/JS-heavy crawls must run in a crawler worker.
+
+# Core
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+
+# Database
+sqlalchemy>=2.0.25
+aiosqlite>=0.19.0
+psycopg2-binary>=2.9.9
+redis>=5.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+httpx>=0.26.0
+
+# AI / LLM
+anthropic>=0.18.0
+openai>=1.12.0
+
+# Vector Database
+qdrant-client>=1.7.1
+
+# Document Processing
+pypdf2>=3.0.1
+beautifulsoup4>=4.12.0
+# BeautifulSoup is called with the 'html.parser' backend (Python stdlib) so
+# lxml is NOT required in the light API image. The crawler image gets lxml
+# transitively via crawl4ai.
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+httpx>=0.26.0
+loguru>=0.7.2  # Structured logging
+
+# Shopify
+ShopifyAPI>=12.4.0
+
+# Task Queue
+celery[redis]>=5.3.0
+flower>=2.0.0
+
+# Rate Limiting
+slowapi>=0.1.9
+
+# Excel Export
+openpyxl>=3.1.0
+
+# Google APIs
+google-api-python-client>=2.116.0
+google-analytics-data>=0.18.2
+google-auth>=2.27.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0

@@ -1,0 +1,26 @@
+{
+    "pythonPath": "D:/python.exe",
+    "pythonVersion": "3.11",
+    "include": [
+        "backend/app"
+    ],
+    "extraPaths": [
+        "backend",
+        "D:/Lib/site-packages"
+    ],
+    "exclude": [
+        "**/__pycache__",
+        "backend/alembic",
+        "backend/scripts",
+        "backend/tests",
+        "frontend",
+        "node_modules"
+    ],
+    "typeCheckingMode": "basic",
+    "reportMissingImports": "warning",
+    "reportMissingModuleSource": "none",
+    "reportOptionalMemberAccess": "none",
+    "reportGeneralTypeIssues": "warning",
+    "reportArgumentType": "none",
+    "reportIndexIssue": "none"
+}

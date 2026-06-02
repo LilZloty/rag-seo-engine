@@ -1,0 +1,9 @@
+# Crawler-only dependencies (additive on top of requirements.txt)
+#
+# Installed into the crawler-worker image ONLY. The FastAPI image stays light
+# by omitting this file. crawl4ai pulls heavy transitive deps (Playwright,
+# patchright, scipy, numpy, litellm, nltk, shapely, alphashape, etc.) that
+# collectively add ~600 MB to the image.
+
+# AI-ready web crawling (Playwright-backed, handles JS-rendered pages)
+crawl4ai>=0.4.0

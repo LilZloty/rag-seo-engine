@@ -1,0 +1,25 @@
+# Development overrides — hot-reload for backend and frontend
+# Usage:  docker-compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+# Only backend and frontend are overridden; postgres, redis, qdrant stay the same.
+
+services:
+  backend:
+    volumes:
+      - ./backend:/app
+      - ${GOOGLE_SA_KEY_PATH:-./credentials/google-sa.json}:/app/credentials/google-sa.json:ro
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # --reload watches for file changes and auto-restarts the server
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: ["npx", "next", "dev", "--hostname", "0.0.0.0"]
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
+      - BACKEND_URL=http://backend:8000
+      - WATCHPACK_POLLING=true

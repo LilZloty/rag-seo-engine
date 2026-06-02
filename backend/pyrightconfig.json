@@ -1,0 +1,24 @@
+{
+    "pythonPath": "D:/python.exe",
+    "pythonVersion": "3.11",
+    "include": [
+        "app"
+    ],
+    "extraPaths": [
+        ".",
+        "D:/Lib/site-packages"
+    ],
+    "exclude": [
+        "**/__pycache__",
+        "alembic",
+        "scripts",
+        "tests"
+    ],
+    "typeCheckingMode": "basic",
+    "reportMissingImports": "warning",
+    "reportMissingModuleSource": "none",
+    "reportOptionalMemberAccess": "none",
+    "reportGeneralTypeIssues": "warning",
+    "reportArgumentType": "none",
+    "reportIndexIssue": "none"
+}

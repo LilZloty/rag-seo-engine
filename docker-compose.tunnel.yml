@@ -1,0 +1,22 @@
+# Dev overlay for tunnel-based Postgres (no local postgres container needed)
+#
+# Usage:
+#   1. Start tunnel: .\start-tunnel.ps1
+#   2. Start services: docker-compose -f docker-compose.yml -f docker-compose.tunnel.yml up redis qdrant
+#   3. Run backend locally: cd backend && uvicorn app.main:app --reload
+#
+# This removes the postgres service and adjusts dependencies.
+
+services:
+  postgres:
+    profiles: ["disabled"]
+
+  backend:
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      - USE_POSTGRES=true
+      - POSTGRES_URL=${POSTGRES_URL}

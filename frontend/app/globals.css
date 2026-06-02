@@ -1,0 +1,499 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   Example Store Brand Design System
+   240° Signature Angle | Industrial Aesthetic
+   ============================================ */
+
+/* Resolve Font Face - Custom Brand Display Font */
+@font-face {
+  font-family: 'Resolve';
+  src: url('/Resolve-SemiboldWd.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+
+/* Brand CSS Variables */
+:root {
+  /* shadcn chart palette — mapped to Example Store brand colors */
+  --chart-1: 44 100% 48%;    /* #f7b500  — gold    (brand / revenue) */
+  --chart-2: 217 89% 61%;    /* #4285f4  — blue    (GSC) */
+  --chart-3: 26 100% 50%;    /* #ff6d00  — orange  (GA4) */
+  --chart-4: 161 63% 41%;    /* #10b981  — green   (conversions / DataForSEO) */
+  --chart-5: 271 91% 65%;    /* #a855f7  — purple  (LLM / AI) */
+
+  --v07-yellow: #F7B500;
+  --v07-yellow-hover: #ffc933;
+  --v07-yellow-muted: #d4a000;
+  --v07-black: #000000;
+  --v07-gray: #808080;
+  --v07-card: #111111;
+  --v07-header: #1a1a1a;
+  --v07-surface: #0a0a0a;
+
+  /* Text tiers (WCAG AA on #0a0a0a: muted ~8.4:1, subtle ~4.6:1) */
+  --v07-text-muted: #a1a1a1;
+  --v07-text-subtle: #7a7a7a;
+
+  /* 240 degree angle for signature element */
+  --v07-angle: -60deg;
+  /* Visual equivalent of 240° */
+
+  /* Typography scale */
+  --text-h1: clamp(2.5rem, 5vw, 4.5rem);
+  --text-h2: clamp(1.75rem, 3vw, 3rem);
+  --text-h3: clamp(1.25rem, 2vw, 2rem);
+  --text-body: 1rem;
+  --text-small: 0.875rem;
+  --text-xs: 0.75rem;
+}
+
+/* Reset */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Base Body */
+body {
+  font-family: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: var(--v07-black);
+  color: #fff;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Selection - Brand Yellow */
+::selection {
+  background: var(--v07-yellow);
+  color: var(--v07-black);
+}
+
+/* ============================================
+   Custom Scrollbar - Industrial Style
+   ============================================ */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--v07-surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 0;
+  /* Sharp edges for industrial look */
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--v07-yellow);
+}
+
+/* ============================================
+   Smooth Transitions
+   ============================================ */
+button,
+a,
+input,
+select,
+textarea {
+  transition-property: color, background-color, border-color, box-shadow, transform;
+  transition-duration: 200ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ============================================
+   Focus States - Yellow Outline
+   ============================================ */
+/* Buttons and links use outline for focus */
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--v07-yellow);
+  outline-offset: 2px;
+}
+
+/* Form inputs use border-based focus (already styled inline) */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+/* ============================================
+   240° Signature Element Classes
+   ============================================ */
+
+/* Diagonal accent border - apply to headers */
+.v07-diagonal-border {
+  position: relative;
+  border-bottom: 2px solid var(--v07-yellow);
+}
+
+.v07-diagonal-border::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  right: 0;
+  width: 100px;
+  height: 2px;
+  background: var(--v07-yellow);
+  transform-origin: right center;
+  transform: rotate(var(--v07-angle));
+}
+
+/* Diagonal corner accent for cards */
+.v07-corner-accent {
+  position: relative;
+  overflow: hidden;
+}
+
+.v07-corner-accent::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 60px;
+  height: 60px;
+  background: linear-gradient(var(--v07-angle), transparent 50%, rgba(247, 181, 0, 0.1) 50%);
+  pointer-events: none;
+}
+
+/* Diagonal line pattern background */
+.v07-pattern-bg {
+  background-image: repeating-linear-gradient(var(--v07-angle),
+      transparent,
+      transparent 20px,
+      rgba(247, 181, 0, 0.02) 20px,
+      rgba(247, 181, 0, 0.02) 21px);
+}
+
+/* Industrial grid pattern */
+.v07-grid-bg {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* ============================================
+   Typography Utilities
+   ============================================ */
+
+/* Display headings - use Resolve font */
+.text-display {
+  font-family: 'Resolve', 'Montserrat', sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Technical/mono text for SKUs, codes */
+.text-technical {
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 0.875rem;
+  letter-spacing: 0.02em;
+}
+
+/* ============================================
+   Button Base Styles
+   ============================================ */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--v07-yellow);
+  color: var(--v07-black);
+  font-weight: 600;
+  font-size: 0.875rem;
+  border: none;
+  cursor: pointer;
+  transition: all 200ms;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--v07-yellow-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: transparent;
+  color: #fff;
+  font-weight: 500;
+  font-size: 0.875rem;
+  border: 1px solid #333;
+  cursor: pointer;
+  transition: all 200ms;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--v07-yellow);
+  color: var(--v07-yellow);
+}
+
+/* ============================================
+   Card Base Styles
+   ============================================ */
+.v07-card {
+  background: var(--v07-card);
+  border: 1px solid #222;
+  transition: border-color 200ms, box-shadow 200ms;
+}
+
+.v07-card:hover {
+  border-color: rgba(247, 181, 0, 0.3);
+}
+
+/* ============================================
+   Status Badge Styles (No emoji)
+   ============================================ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.badge-success {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+
+.badge-warning {
+  background: rgba(247, 181, 0, 0.15);
+  color: var(--v07-yellow);
+}
+
+.badge-error {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+}
+
+/* Dot indicator for badges */
+.badge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* ============================================
+   Animation Classes
+   ============================================ */
+.animate-stagger>* {
+  opacity: 0;
+  animation: slideUp 0.4s ease-out forwards;
+}
+
+.animate-stagger>*:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.animate-stagger>*:nth-child(2) {
+  animation-delay: 50ms;
+}
+
+.animate-stagger>*:nth-child(3) {
+  animation-delay: 100ms;
+}
+
+.animate-stagger>*:nth-child(4) {
+  animation-delay: 150ms;
+}
+
+.animate-stagger>*:nth-child(5) {
+  animation-delay: 200ms;
+}
+
+.animate-stagger>*:nth-child(6) {
+  animation-delay: 250ms;
+}
+
+@keyframes slideUp {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================
+   Toast Notification Styles
+   ============================================ */
+.toast-container {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.toast {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  background: var(--v07-header);
+  border-left: 3px solid var(--v07-yellow);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  animation: slideRight 0.3s ease-out;
+}
+
+.toast-success {
+  border-left-color: #4ade80;
+}
+
+.toast-error {
+  border-left-color: #f87171;
+}
+
+/* ============================================
+   Loading Spinner (no emoji)
+   ============================================ */
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--v07-yellow);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ============================================
+   Table Styles
+   ============================================ */
+.v07-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.v07-table th {
+  text-align: left;
+  padding: 1rem 1.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #666;
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid #222;
+}
+
+.v07-table td {
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.v07-table tr:hover td {
+  background: rgba(247, 181, 0, 0.03);
+}
+
+/* ============================================
+   Input/Select Styles
+   ============================================ */
+.v07-input {
+  width: 100%;
+  padding: 0.625rem 1rem;
+  background: var(--v07-black);
+  border: 1px solid #333;
+  color: #fff;
+  font-size: 0.875rem;
+  transition: border-color 200ms;
+}
+
+.v07-input:focus {
+  outline: none;
+  border-color: var(--v07-yellow);
+}
+
+.v07-input::placeholder {
+  color: #555;
+}
+
+/* ============================================
+   Modal Styles
+   ============================================ */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 1rem;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.modal-content {
+  background: var(--v07-card);
+  border: 1px solid #333;
+  max-width: 56rem;
+  width: 100%;
+  max-height: 90vh;
+  overflow: auto;
+  animation: slideUp 0.3s ease-out;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem;
+  border-bottom: 1px solid #333;
+  position: relative;
+}
+
+/* 240° accent on modal header */
+.modal-header::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 80px;
+  height: 1px;
+  background: var(--v07-yellow);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}

@@ -1,0 +1,18 @@
+{
+    "source_directories": ["app"],
+    "search_path": [
+        ".",
+        "D:/Lib/site-packages"
+    ],
+    "site_package_search_strategy": "all",
+    "site_roots": ["."],
+    "python_version": "3.11",
+    "strict": false,
+    "taint_models_path": [],
+    "exclude": [
+        ".*/__pycache__/.*",
+        ".*/alembic/.*",
+        ".*/scripts/.*",
+        ".*/tests/.*"
+    ]
+}

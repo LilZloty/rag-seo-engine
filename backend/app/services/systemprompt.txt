@@ -1,0 +1,1621 @@
+"""
+LLM Service - Unified interface for LLM providers
+
+This module delegates to modular providers for most LLM calls:
+- AnthropicProvider: Claude API (app.services.llm_providers.anthropic)
+- OpenAIProvider: GPT API (app.services.llm_providers.openai)
+- GrokProvider: X.AI Grok API (app.services.llm_providers.grok)
+- OllamaProvider: Local Ollama (app.services.llm_providers.ollama)
+- KimiProvider: Moonshot Kimi K2.5 (app.services.llm_providers.kimi)
+
+Legacy inline implementations preserved for:
+- MiniMax: Complex reasoning/HTML handling
+- Mistral: Fallback provider
+
+Refactored per Modularization Plan:
+- Provider implementations moved to app.services.llm_providers
+- Factory pattern for provider creation and switching
+- Consistent response handling across providers
+"""
+
+
+import httpx
+import json
+import re
+from typing import List, Dict, Optional
+from app.core.config import settings
+from app.core.exceptions import LLMProviderError, ConfigurationError
+from app.services.llm_providers import LLMProviderFactory, BaseLLMProvider
+
+
+class LLMService:
+    """Unified LLM service using modular provider architecture."""
+
+    def __init__(self):
+        self.provider_name = settings.LLM_PROVIDER.lower()
+        self._provider: Optional[BaseLLMProvider] = None
+        print(f"[LLM] Using provider: {self.provider_name}")
+
+    @property
+    def provider(self) -> BaseLLMProvider:
+        """Lazy-load the provider instance."""
+        if self._provider is None:
+            self._provider = LLMProviderFactory.create(self.provider_name)
+        return self._provider
+
+    async def generate_content(
+        self,
+        product_info: Dict,
+        context: List[Dict],
+        system_prompt: Optional[str] = None,
+        provider: Optional[str] = None,
+        model_name: Optional[str] = None,
+        performance_data: Optional[Dict] = None,
+        analysis_insights: Optional[Dict] = None
+    ) -> Dict:
+        """
+        Generate content using the configured or specified provider.
+
+        Delegates to the modular provider architecture for:
+        - Anthropic, OpenAI, Grok, Ollama (via llm_providers module)
+        - MiniMax, Mistral (inline implementations)
+
+        Falls back to default provider on error.
+        """
+        actual_system_prompt = system_prompt or self._get_system_prompt()
+        user_prompt = self._build_user_prompt(product_info, context, performance_data, analysis_insights)
+
+        target_provider = provider.lower() if provider else self.provider_name
+
+        # Auto-route multi-agent model to grok420 provider (requires Responses API)
+        if model_name and 'multi-agent' in model_name and target_provider != 'grok420':
+            print(f"[LLM] Auto-routing to grok420 for multi-agent model: {model_name}")
+            target_provider = 'grok420'
+
+        print(f"[LLM] Generating with provider: {target_provider} (model: {model_name or 'default'})")
+
+        # Check if we have a modular provider for this
+        modular_providers = ['anthropic', 'openai', 'grok', 'xai', 'grok420', 'ollama', 'kimi']
+        is_modular = target_provider in modular_providers
+        
+        if is_modular:
+            try:
+                llm_provider = LLMProviderFactory.create(target_provider, model=model_name)
+                return await llm_provider.generate(
+                    system_prompt=actual_system_prompt,
+                    user_prompt=user_prompt,
+                    model=model_name
+                )
+            except Exception as e:
+                print(f"[LLM] Modular provider error ({target_provider}): {e}")
+                # If this was the requested provider (not the default), fall back to default
+                if target_provider != self.provider_name:
+                    print(f"[LLM] Falling back to default provider: {self.provider_name}")
+                    return await self.generate_content(
+                        product_info, context, system_prompt, 
+                        provider=self.provider_name, 
+                        model_name=None  # Use default model for fallback provider
+                    )
+                # Otherwise, this was the default and it failed - return fallback content
+                print(f"[LLM] Default provider failed, returning fallback content")
+                return self._get_fallback_content(product_info, context, analysis_insights, performance_data)
+
+        # Fallback to inline implementations for non-modular providers
+        try:
+            if target_provider == "minimax":
+                return await self._call_minimax(actual_system_prompt, user_prompt, product_info, model_name=model_name)
+            elif target_provider == "mistral":
+                return await self._call_mistral(actual_system_prompt, user_prompt, model_name=model_name)
+            else:
+                # Unknown provider - try default
+                print(f"[LLM] Unknown provider: {target_provider}, falling back to default ({self.provider_name})")
+                return await self.generate_content(product_info, context, system_prompt, provider=self.provider_name, model_name=None, performance_data=performance_data, analysis_insights=analysis_insights)
+        except Exception as e:
+            print(f"[LLM] Generation error: {e}")
+            return self._get_fallback_content(product_info, context, analysis_insights, performance_data)
+
+    # ============ Inline Provider Implementations (MiniMax, Mistral) ============
+    # Note: Anthropic, OpenAI, Grok, Ollama are delegated to app.services.llm_providers
+
+    async def _call_minimax(self, system_prompt: str, user_prompt: str, product_info: Dict, model_name: Optional[str] = None) -> Dict:
+        """Call MiniMax API with thinking/reasoning support"""
+        if not settings.MINIMAX_API_KEY:
+            raise ValueError("MINIMAX_API_KEY not configured")
+
+        target_model = model_name or settings.MINIMAX_MODEL
+        print(f"[MiniMax] Calling API with model: {target_model}")
+
+        payload = {
+            "model": target_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7,
+            "max_output_tokens": 4096,
+            "think_config": {
+                "type": "think",
+                "switch": True,
+                "depth": 5
+            }
+        }
+
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            response = await client.post(
+                "https://api.minimax.chat/v1/text/chatcompletion_v2",
+                headers={
+                    "Authorization": f"Bearer {settings.MINIMAX_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json=payload
+            )
+
+            if response.status_code != 200:
+                print(f"[MiniMax] Error {response.status_code}: {response.text[:500]}")
+            response.raise_for_status()
+
+            result = response.json()
+            content_text = result["choices"][0]["message"]["content"]
+
+            # Check for thinking/reasoning content
+            reasoning_content = None
+            if "<think>" in content_text and "</think>" in content_text:
+                think_start = content_text.find("<think>") + 7
+                think_end = content_text.find("</think>")
+                reasoning_content = content_text[think_start:think_end]
+                print(f"\n{'='*60}")
+                print(f"[MiniMax] 🧠 REASONING/THINKING:")
+                print(f"{'='*60}")
+                print(reasoning_content[:1500])
+                if len(reasoning_content) > 1500:
+                    print(f"... [truncated, total {len(reasoning_content)} chars]")
+                print(f"{'='*60}\n")
+
+                # Extract everything after </thinking> tag
+                think_close = "</thinking>"
+                if think_close in content_text:
+                    content_text = content_text.split(think_close)[-1].strip()
+                else:
+                    content_text = content_text.strip()
+                print(f"[MiniMax] After stripping think tags: {content_text[:200]}...")
+
+            # Check if response is HTML instead of JSON
+            if content_text.startswith("```html") or content_text.startswith("<h"):
+                print(f"[MiniMax] Detected HTML response - converting to JSON")
+                if "```html" in content_text:
+                    content_text = content_text.split("```html")[1].split("```")[0].strip()
+                elif "```" in content_text:
+                    content_text = content_text.split("```")[1].split("```")[0].strip()
+
+                result_dict = self._html_to_json_fallback(content_text, product_info)
+                if reasoning_content:
+                    result_dict["reasoning"] = reasoning_content
+                return result_dict
+
+            # Handle JSON wrapped in markdown
+            if "```json" in content_text:
+                content_text = content_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in content_text:
+                content_text = content_text.split("```")[1].split("```")[0].strip()
+
+            # Try to find JSON object
+            if not content_text.startswith("{"):
+                json_match = re.search(r'\{[\s\S]*\}', content_text)
+                if json_match:
+                    content_text = json_match.group()
+                    print(f"[MiniMax] Extracted JSON from content")
+
+            parsed_json = json.loads(content_text)
+            normalized = self._normalize_response_fields(parsed_json, product_info)
+
+            if reasoning_content:
+                normalized["reasoning"] = reasoning_content
+
+            print(f"[MiniMax] Normalized fields: {list(normalized.keys())}")
+            return normalized
+
+    async def _call_mistral(self, system_prompt: str, user_prompt: str, model_name: Optional[str] = None) -> Dict:
+        """Call Mistral AI API (Direct REST)"""
+        if not settings.MISTRAL_API_KEY:
+            raise ValueError("MISTRAL_API_KEY not configured")
+
+        target_model = model_name or settings.MISTRAL_MODEL
+        print(f"[Mistral] Calling API with model: {target_model}")
+
+        payload = {
+            "model": target_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0.7,
+            "response_format": {"type": "json_object"}
+        }
+
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                "https://api.mistral.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.MISTRAL_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json=payload
+            )
+
+            if response.status_code != 200:
+                print(f"[Mistral] Error {response.status_code}: {response.text[:500]}")
+            response.raise_for_status()
+
+            result = response.json()
+            content_text = result["choices"][0]["message"]["content"]
+
+            if "```json" in content_text:
+                content_text = content_text.split("```json")[1].split("```")[0].strip()
+            elif "```" in content_text:
+                content_text = content_text.split("```")[1].split("```")[0].strip()
+
+            return json.loads(content_text)
+
+    # ============ Response Normalization ============
+
+    def _normalize_response_fields(self, parsed_json: Dict, product_info: Dict) -> Dict:
+        """Normalize LLM response field names to match frontend expectations"""
+        product_info = product_info or {}
+        product_name = product_info.get('title', '')
+        sku = product_info.get('sku', '')
+        vendor = product_info.get('vendor', 'TSS')
+        images = product_info.get('image_filenames', [])
+
+        def slugify(text: str) -> str:
+            text = text.lower()
+            text = text.replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u').replace('ñ', 'n')
+            text = re.sub(r'[^a-z0-9\s-]', '', text)
+            text = re.sub(r'\s+', '-', text.strip())
+            return re.sub(r'-+', '-', text)
+
+        field_mappings = {
+            'h1_title': ['h1_title', 'h1', 'titulo', 'title', 'titulo_seo', 'seo_title', 'product_title'],
+            'description_html': ['description_html', 'hook_html', 'descripcion', 'description', 'body_html', 'content', 'html_content', 'product_description'],
+            'alt_tags': ['alt_tags', 'alt_textos', 'image_alts', 'alts', 'alt_texts', 'alt_text', 'imagenes_alt'],
+            'meta_title': ['meta_title', 'meta_titulo', 'seo_meta_title', 'titulo_meta'],
+            'meta_description': ['meta_description', 'meta_descripcion', 'seo_meta_description', 'descripcion_meta'],
+            'url_handle': ['url_handle', 'handle', 'slug', 'url_slug', 'seo_url'],
+            'short_description': ['short_description', 'descripcion_corta', 'excerpt'],
+            'resumen': ['resumen', 'ficha_tecnica', 'technical_summary', 'resumen_tecnico'],
+            'compatible_vehicles': ['compatible_vehicles', 'vehiculos', 'vehiculos_compatibles', 'vehicles'],
+            'technical_specs': ['technical_specs', 'specs', 'especificaciones', 'especificaciones_tecnicas'],
+            'installation_guide': ['installation_guide', 'guia_instalacion', 'instalacion'],
+            'faq_items': ['faq_items', 'faq', 'preguntas_frecuentes'],
+        }
+
+        normalized = {}
+
+        for target_field, source_fields in field_mappings.items():
+            for source in source_fields:
+                if source in parsed_json and parsed_json[source]:
+                    normalized[target_field] = parsed_json[source]
+                    break
+
+        product_slug = slugify(product_name)[:60]
+
+        # Enforce 50-60 char limit for H1 title (SEO best practice)
+        if normalized.get('h1_title'):
+            h1 = normalized['h1_title']
+            if len(h1) > 60:
+                normalized['h1_title'] = h1[:60]
+                print(f"[Normalize] h1_title truncated to 60 chars: {normalized['h1_title']}")
+            elif len(h1) < 50:
+                # Chain expansions until we reach 50+ chars
+                h1_expanded = h1
+                
+                # Extract all transmission codes from product name
+                trans_codes = re.findall(r'(\d{1,2}[LR]\d{2}[EW]?|ZF\d+HP\d*|[A-Z]{2}\d{3}[A-Z]*|\d{2}[GK])', product_name, re.IGNORECASE)
+                vendor_str = product_info.get('vendor', '')
+                product_type_str = product_info.get('product_type', '')
+                
+                # Expansion sources in priority order
+                expansions = []
+                for tc in trans_codes:
+                    if tc not in h1_expanded:
+                        expansions.append(tc)
+                if vendor_str and vendor_str not in h1_expanded:
+                    expansions.append(vendor_str)
+                if product_type_str and product_type_str not in h1_expanded and len(product_type_str) > 3:
+                    expansions.append(product_type_str)
+                # Use full product name as final fallback
+                if len(h1_expanded) < 50 and product_name != h1_expanded:
+                    remaining_words = [w for w in product_name.split() if w not in h1_expanded.split()]
+                    for word in remaining_words:
+                        if len(word) > 2:
+                            expansions.append(word)
+                
+                # Apply expansions one by one until we reach 50+ chars
+                for exp in expansions:
+                    if len(h1_expanded) >= 50:
+                        break
+                    candidate = f"{h1_expanded} {exp}"
+                    if len(candidate) <= 60:
+                        h1_expanded = candidate
+                    elif len(h1_expanded) < 50:
+                        # Truncate expansion to fit
+                        remaining = 60 - len(h1_expanded) - 1
+                        if remaining > 3:
+                            h1_expanded = f"{h1_expanded} {exp[:remaining]}"
+                
+                # Final fallback: pad with " - Example Store" brand suffix
+                if len(h1_expanded) < 50:
+                    suffix = " - Example Store"
+                    if len(h1_expanded) + len(suffix) <= 60:
+                        h1_expanded = f"{h1_expanded}{suffix}"
+                    else:
+                        remaining = 60 - len(h1_expanded)
+                        if remaining > 3:
+                            h1_expanded = f"{h1_expanded}{suffix[:remaining]}"
+                
+                normalized['h1_title'] = h1_expanded[:60]
+                print(f"[Normalize] h1_title expanded to {len(normalized['h1_title'])} chars: {normalized['h1_title']}")
+        else:
+            # Generate optimized H1 with 50-60 chars from product name
+            h1_base = product_name[:60]
+            
+            if len(h1_base) < 50:
+                # Same chain expansion logic
+                trans_codes = re.findall(r'(\d{1,2}[LR]\d{2}[EW]?|ZF\d+HP\d*|[A-Z]{2}\d{3}[A-Z]*|\d{2}[GK])', product_name, re.IGNORECASE)
+                vendor_str = product_info.get('vendor', '')
+                product_type_str = product_info.get('product_type', '')
+                
+                expansions = []
+                for tc in trans_codes:
+                    if tc not in h1_base:
+                        expansions.append(tc)
+                if vendor_str and vendor_str not in h1_base:
+                    expansions.append(vendor_str)
+                if product_type_str and product_type_str not in h1_base and len(product_type_str) > 3:
+                    expansions.append(product_type_str)
+                
+                for exp in expansions:
+                    if len(h1_base) >= 50:
+                        break
+                    candidate = f"{h1_base} {exp}"
+                    if len(candidate) <= 60:
+                        h1_base = candidate
+                    elif len(h1_base) < 50:
+                        remaining = 60 - len(h1_base) - 1
+                        if remaining > 3:
+                            h1_base = f"{h1_base} {exp[:remaining]}"
+                
+                if len(h1_base) < 50:
+                    suffix = " - Example Store"
+                    if len(h1_base) + len(suffix) <= 60:
+                        h1_base = f"{h1_base}{suffix}"
+            
+            normalized['h1_title'] = h1_base[:60]
+            print(f"[Normalize] h1_title generated ({len(normalized['h1_title'])} chars): {normalized['h1_title']}")
+
+        # Strip SKU from h1_title and meta_title — SKU has no SEO/AEO/GEO value in titles
+        if sku:
+            for field in ('h1_title', 'meta_title'):
+                val = normalized.get(field, '')
+                if val and sku in val:
+                    cleaned = re.sub(r'\s*' + re.escape(sku) + r'\s*', ' ', val).strip()
+                    cleaned = re.sub(r'\s{2,}', ' ', cleaned)
+                    if len(cleaned) > 20:  # only apply if result is still meaningful
+                        normalized[field] = cleaned
+                        print(f"[Normalize] Stripped SKU '{sku}' from {field}: {cleaned}")
+
+        if not normalized.get('description_html'):
+            normalized['description_html'] = product_info.get('description', '')
+            print(f"[Normalize] description_html missing, using existing description")
+
+        if not normalized.get('alt_tags') and images:
+            alt_tags = []
+            for i, img in enumerate(images[:10]):
+                unique_filename = f"{product_slug}-vista-{i+1}.jpg"
+                alt_text = f"{product_name} - {vendor} - Vista {i+1}"
+                alt_tags.append(f"{unique_filename} | {alt_text}")
+            normalized['alt_tags'] = alt_tags
+            print(f"[Normalize] alt_tags missing, generated {len(alt_tags)} with unique filenames")
+        elif normalized.get('alt_tags'):
+            fixed_alt_tags = []
+            for i, alt in enumerate(normalized['alt_tags']):
+                if '|' in alt:
+                    parts = alt.split('|')
+                    filename = parts[0].strip()
+                    alt_text = parts[1].strip() if len(parts) > 1 else f"{product_name} - Vista {i+1}"
+                    if len(filename) < 10 or filename.count('-') < 2:
+                        filename = f"{product_slug}-vista-{i+1}.jpg"
+                    fixed_alt_tags.append(f"{filename} | {alt_text}")
+                else:
+                    fixed_alt_tags.append(f"{product_slug}-vista-{i+1}.jpg | {alt}")
+            normalized['alt_tags'] = fixed_alt_tags
+
+        if not normalized.get('url_handle'):
+            normalized['url_handle'] = product_slug[:100]
+            print(f"[Normalize] url_handle missing, generated: {normalized['url_handle'][:40]}...")
+
+        if not normalized.get('meta_title'):
+            trans_match = re.search(r'(\d{1,2}[LR]\d{2}[EW]?|ZF\d+HP\d+|[A-Z]{2}\d{3}[A-Z]*)', product_name, re.IGNORECASE)
+            trans_code = trans_match.group(0) if trans_match else ''
+            # Strict 60 char limit for Google display
+            # Fallback when the LLM didn't emit a meta_title. Keep product name
+            # + transmission code front and centre. Only append ' | Example Store'
+            # if there's genuine room (≤50 chars) — otherwise drop it to leave
+            # space for the query-matching keywords already in the product name.
+            base = f"{product_name} {trans_code}".strip() if trans_code else product_name
+            base = base[:60]
+            if len(base) <= 50:
+                normalized['meta_title'] = f"{base} | Example Store"[:60]
+            else:
+                normalized['meta_title'] = base
+            print(f"[Normalize] meta_title missing, generated: {normalized['meta_title']}")
+
+        if not normalized.get('meta_description'):
+            # Priority: product type + transmission code FIRST, then supplier/vendor
+            # mentioned last. Mechanics search by transmission code, not supplier.
+            trans_match = re.search(r'(\d{1,2}[LR]\d{2}[EW]?|ZF\d+HP\d+|[A-Z]{2}\d{3}[A-Z]*)', product_name, re.IGNORECASE)
+            trans_code = trans_match.group(0) if trans_match else ''
+            # Strip the vendor from the product_name so it doesn't double-up
+            core_name = product_name
+            if vendor:
+                core_name = re.sub(rf'\b{re.escape(vendor)}\b', '', core_name, flags=re.IGNORECASE).strip()
+            base = core_name[:70]
+            if trans_code:
+                base = f"{base} {trans_code}".strip()
+            tail_parts = []
+            if vendor:
+                tail_parts.append(vendor)
+            tail = '. '.join(tail_parts)
+            suffix = ". Calidad original, envío México."
+            normalized['meta_description'] = (f"{base}. {tail}{suffix}" if tail else f"{base}{suffix}")[:160]
+            print(f"[Normalize] meta_description missing, generated: {normalized['meta_description'][:50]}...")
+
+        if not normalized.get('short_description'):
+            h1 = normalized.get('h1_title', product_name)
+            normalized['short_description'] = f"{h1}. {vendor}. Garantía de 1 año. Envío express 1-2 días a todo México."[:160]
+            print(f"[Normalize] short_description missing, generated: {normalized['short_description'][:50]}...")
+
+        if not normalized.get('compatible_vehicles') and normalized.get('description_html'):
+            vehicles_match = re.search(r'<h4>\s*Veh[ií]culos[^<]*</h4>(.*?)(?=<h|$)', normalized['description_html'], re.IGNORECASE | re.DOTALL)
+            if vehicles_match:
+                vehicles_html = vehicles_match.group(1)
+                normalized['compatible_vehicles'] = re.sub(r'<[^>]+>', ' ', vehicles_html).strip()[:500]
+                print(f"[Normalize] compatible_vehicles missing, extracted from HTML")
+
+        # Handle resumen (technical specifications table)
+        if not normalized.get('resumen'):
+            # Generate fallback technical summary table
+            product_type_res = product_info.get('product_type', 'Parte de Transmisión')
+            rows = [
+                ('SKU', sku or 'N/A'),
+                ('Producto', product_name or 'N/A'),
+                ('Marca', vendor or 'N/A'),
+                ('Tipo', product_type_res or 'N/A'),
+                ('Garantía', '1 año'),
+            ]
+            
+            rows_html = ''
+            for label, value in rows:
+                rows_html += (
+                    f'<tr>'
+                    f'<td style="padding:10px;border:1px solid #ddd;"><strong>{label}</strong></td>'
+                    f'<td style="padding:10px;border:1px solid #ddd;">{value}</td>'
+                    f'</tr>\n'
+                )
+            
+            normalized['resumen'] = (
+                f'<h4>Ficha Técnica</h4>\n'
+                f'<div style="overflow-x:auto;">\n'
+                f'<table style="width:100%;border-collapse:collapse;">\n'
+                f'<tbody>\n'
+                f'<tr style="background-color:#f2f2f2;">'
+                f'<th style="padding:10px;text-align:left;border:1px solid #ddd;">Dato</th>'
+                f'<th style="padding:10px;text-align:left;border:1px solid #ddd;">Especificación</th>'
+                f'</tr>\n'
+                f'{rows_html}'
+                f'</tbody>\n'
+                f'</table>\n'
+                f'</div>'
+            )
+            print(f"[Normalize] resumen missing, generated fallback table")
+
+        return normalized
+
+    def _html_to_json_fallback(self, html_content: str, product_info: Dict) -> Dict:
+        """Convert HTML response to expected JSON format"""
+        product_info = product_info or {}
+
+        product_name = product_info.get('title', 'Refacción para Transmisión')
+        sku = product_info.get('sku', '')
+        vendor = product_info.get('vendor', 'TSS')
+        images = product_info.get('image_filenames', [])
+
+        trans_code_match = re.search(r'(ZF\d+HP\d+|\d{1,2}[LR]\d{2}|[A-Z]{2}\d{3}[A-Z]*|\d{3}RE)', product_name, re.IGNORECASE)
+        trans_code = trans_code_match.group(0) if trans_code_match else ''
+
+        oem_match = re.search(r'OEM[:\s]*([A-Z0-9\-]+)', product_info.get('description', ''), re.IGNORECASE)
+        oem_number = oem_match.group(1) if oem_match else ''
+
+        title_lower = product_name.lower()
+        if 'filtro' in title_lower and 'carter' in title_lower:
+            product_type_short = 'Conjunto Filtro + Cárter'
+        elif 'filtro' in title_lower:
+            product_type_short = 'Filtro Transmisión'
+        elif 'cuerpo' in title_lower and 'valvula' in title_lower:
+            product_type_short = 'Cuerpo de Válvulas'
+        elif 'solenoide' in title_lower:
+            product_type_short = 'Solenoide'
+        elif 'kit' in title_lower:
+            product_type_short = 'Kit Reparación'
+        elif 'sensor' in title_lower:
+            product_type_short = 'Sensor'
+        elif 'bomba' in title_lower:
+            product_type_short = 'Bomba'
+        elif 'convertidor' in title_lower:
+            product_type_short = 'Convertidor'
+        elif 'banda' in title_lower:
+            product_type_short = 'Banda'
+        else:
+            product_type_short = product_info.get('product_type', 'Refacción') or 'Refacción'
+
+        h1_parts = [product_type_short]
+
+        all_trans_codes = re.findall(r'(ZF\d+HP\d+|\d{1,2}[LR]\d{2}|[A-Z]{2}\d{3}[A-Z]*|\d{3}RE)', product_name, re.IGNORECASE)
+        if all_trans_codes:
+            h1_parts.append(" ".join(all_trans_codes[:2]))
+
+        years_match = re.search(r'(\d{4}[-+](?:UP|\d{4}))', product_name, re.IGNORECASE)
+        if years_match:
+            h1_parts.append(years_match.group(1))
+
+        h1_title = " ".join(h1_parts)
+
+        if oem_number and len(h1_title) < 40:
+            h1_title += f" | OEM {oem_number}"
+
+        if vendor and len(h1_title) < 50:
+            h1_title += f" | {vendor}"
+
+        h1_title = h1_title[:100]
+        description_html = html_content
+
+        print(f"[MiniMax] GENERATED unique product H1: {h1_title}")
+
+        specs = re.findall(r'<li>([^<]+)</li>', html_content)
+        if not specs:
+            specs = ["Calidad garantizada", "Ajuste OEM", "Envío express disponible"]
+
+        alt_tags = []
+        for i, img in enumerate(images[:10]):
+            img_name = img if isinstance(img, str) else str(img)
+            alt_text = f"{product_name} - {vendor} - Vista {i+1}"
+            if trans_code:
+                alt_text = f"{product_name} para {trans_code} - {vendor}"
+            alt_tags.append(f"{img_name} | {alt_text}")
+
+        if not alt_tags:
+            alt_tags = [f"{sku.lower() if sku else 'producto'}.jpg | {product_name} - Example Store"]
+
+        url_base = product_name.lower()
+        url_base = url_base.replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u').replace('ñ', 'n')
+        url_base = re.sub(r'[^a-z0-9\s-]', '', url_base)
+        url_base = re.sub(r'\s+', '-', url_base.strip())
+        url_handle = re.sub(r'-+', '-', url_base)[:100]
+
+        # Meta description priority: product type + transmission code FIRST,
+        # then supplier brand LAST (Mexicans search by transmission code, not
+        # supplier brand). Remove the supplier from the product name so it
+        # doesn't appear twice when we append it at the end.
+        core_name = product_name
+        if vendor:
+            core_name = re.sub(rf'\b{re.escape(vendor)}\b', '', core_name, flags=re.IGNORECASE).strip()
+        meta_desc_base = core_name
+        if trans_code:
+            meta_desc_base += f" para {trans_code}"
+        tail = f". Calidad original"
+        if vendor:
+            tail += f" {vendor}"
+        tail += ". Envío express México."
+        meta_description = (meta_desc_base + tail)[:160]
+
+        # Meta title: Strict 60 char limit for Google display.
+        # Vehicle/transmission keywords have higher SERP value than the store
+        # brand for this catalog, so we only append " | Example Store" when there's
+        # comfortable room left.
+        base = f"{product_name} {trans_code}".strip() if trans_code else product_name
+        base = base[:60]
+        if len(base) <= 50:
+            meta_title = f"{base} | Example Store"[:60]
+        else:
+            meta_title = base
+
+        short_desc = f"{product_name}. {vendor}. Garantía incluida. Envío express disponible."[:160]
+
+        vehicles_match = re.search(r'<h4>\s*Veh[ií]culos[^<]*</h4>(.*?)(?=<h|$)', html_content, re.IGNORECASE | re.DOTALL)
+        compatible_vehicles = "Consultar compatibilidad en la descripción del producto"
+        if vehicles_match:
+            vehicles_html = vehicles_match.group(1)
+            compatible_vehicles = re.sub(r'<[^>]+>', ' ', vehicles_html).strip()[:500]
+
+        # Build fallback resumen table for _html_to_json_fallback
+        _sku_fb = product_info.get('sku', '')
+        _vendor_fb = product_info.get('vendor', 'TSS')
+        _ptype_fb = product_info.get('product_type', 'Parte de Transmisión')
+        _rows_fb = [
+            ('SKU', _sku_fb or 'N/A'),
+            ('Producto', product_name or 'N/A'),
+            ('Marca', _vendor_fb or 'N/A'),
+            ('Tipo', _ptype_fb or 'N/A'),
+            ('Garantía', '1 año'),
+        ]
+        _rows_html_fb = ''.join(
+            f'<tr><td style="padding:10px;border:1px solid #ddd;"><strong>{lbl}</strong></td>'
+            f'<td style="padding:10px;border:1px solid #ddd;">{val}</td></tr>\n'
+            for lbl, val in _rows_fb
+        )
+        resumen_fb = (
+            '<h4>Ficha Técnica</h4>\n'
+            '<div style="overflow-x:auto;">\n'
+            '<table style="width:100%;border-collapse:collapse;">\n'
+            '<tbody>\n'
+            '<tr style="background-color:#f2f2f2;">'
+            '<th style="padding:10px;text-align:left;border:1px solid #ddd;">Dato</th>'
+            '<th style="padding:10px;text-align:left;border:1px solid #ddd;">Especificación</th>'
+            '</tr>\n'
+            f'{_rows_html_fb}'
+            '</tbody>\n'
+            '</table>\n'
+            '</div>'
+        )
+
+        return {
+            "h1_title": h1_title,
+            "description_html": description_html,
+            "hook_html": description_html,
+            "technical_specs": specs[:10],
+            "installation_guide": "<p>Instalación profesional recomendada. Consulte manual de servicio del fabricante.</p>",
+            "faq_items": [
+                {"question": "¿Qué garantía tiene este producto?", "answer": "1 año de garantía contra defectos de fabricación."},
+                {"question": "¿Incluye envío express?", "answer": "Sí, envío express 1-2 días a todo México."}
+            ],
+            "compatible_vehicles": compatible_vehicles,
+            "alt_tags": alt_tags,
+            "short_description": short_desc,
+            "meta_title": meta_title,
+            "meta_description": meta_description,
+            "url_handle": url_handle,
+            "resumen": resumen_fb
+        }
+
+    # ============ Prompt Templates ============
+
+    def _get_system_prompt(self) -> str:
+        return """Eres el Gerente de Contenido Técnico Senior para Transmisiones Example Store, experto en SEO/AEO/GEO para refacciones automotrices.
+
+=== REGLA ABSOLUTA #1: RESPONDE SOLO JSON ===
+Tu respuesta DEBE ser ÚNICAMENTE un objeto JSON válido. 
+- NO escribas texto antes o después del JSON
+- NO uses markdown (```json o ```)
+- NO agregues comentarios ni explicaciones
+- SOLO el objeto JSON, nada más
+
+=== INSTRUCCIONES DE CONTENIDO (USAR TODOS LOS DATOS DISPONIBLES) ===
+
+1. **ANÁLISIS GROK**: Usa las recomendaciones del análisis para:
+   - Keywords sugeridas en el título y descripción
+   - FAQ targeting queries (P0715, P0122, etc.)
+   - Comparativas con competidores mencionadas
+   - Schema markup sugerido
+
+2. **DATOS DE LIBRERÍA** (si hay contexto RAG):
+   - Especificaciones técnicas exactas
+   - Códigos OEM
+   - **CRÍTICO - Datos de compatibilidad vehicular: PRESERVAR TODOS los vehículos listados, NO omitir ninguno (ej: SAMSUNG SM5/SM7, ISUZU Impulse, etc.)**
+   - Guías de instalación técnicas
+
+3. **WEB SEARCH**:
+   - Especificaciones de fábrica
+   - Datos de viscosidad, capacidad
+   - Información de aplicaciones
+
+4. **PRODUCTO SHOPIFY**:
+   - SKU, Vendor, Tags
+   - Descripción existente (mejorarla, no copiar)
+
+=== ESTRUCTURA HTML OBLIGATORIA (description_html) ===
+
+<h2>¿[PREGUNTA HOOK SOBRE PROBLEMA ESPECÍFICO]?</h2>
+<p>[Explicación técnica del problema con <strong>keywords principales</strong>]. Menciona el producto y su función. [Detalle técnico de fallas comunes].</p>
+<p>Este repuesto de la marca [VENDOR] está fabricado con [MATERIAL/ESPECIFICACIÓN] para [BENEFICIO TÉCNICO], ofreciendo [RESULTADO]. Marca: [VENDOR] (Calidad [nivel]).</p>
+
+<!-- NOTA SOBRE LENGUAJE PRECISO:
+✓ Usar: "compatible con", "recomendado para", "ayuda a mantener", "previene"
+✗ Evitar: "soluciona", "corrige", "elimina", "repara" (a menos que el producto específicamente haga eso)
+Ejemplo: "Este aceite es compatible con sistemas ZF8HP" (NO "Este aceite repara la transmisión")
+-->
+
+<ul>
+<li><strong>SKU:</strong> [sku]</li>
+<li><strong>Número OEM Referencia:</strong> [oem si existe]</li>
+<li><strong>Tipo:</strong> [tipo de pieza]</li>
+<li><strong>Ubicación:</strong> [ubicación en transmisión]</li>
+<li><strong>Compatibilidad:</strong> [códigos de transmisión]</li>
+<li><strong>Lo que incluye:</strong> [contenido]</li>
+<li><strong>Envíos:</strong> Express 1-2 días en todo México y envíos internacionales con DHL. Envío gratis en tu ciudad y en nuestras sucursales locales. Consulta la <a href="https://www.example-store.com/policies/shipping-policy" title="Política de envíos">política de envíos</a> para más detalles.</li>
+</ul>
+
+<h3>Guía de Instalación</h3>
+<p>Instalación técnica: [Requisitos]. Advertencia de Seguridad: [Advertencia específica si aplica].</p>
+
+<h3>Preguntas Frecuentes</h3>
+<ul>
+<li><strong>[Pregunta 1 basada en análisis AEO]?</strong> [Respuesta técnica completa].</li>
+<li><strong>[Pregunta 2 basada en análisis AEO]?</strong> [Respuesta técnica completa].</li>
+<li><strong>¿Envíos a México?</strong> Express 1-2 días en todo México y envíos internacionales con DHL. Envío gratis en tu ciudad y en nuestras sucursales locales. Consulta la <a href="https://www.example-store.com/policies/shipping-policy" title="Política de envíos">política de envíos</a> para más detalles.</li>
+</ul>
+
+<p>En Example Store, especialistas en refacciones para transmisiones automáticas, ofrecemos calidad. "Calidad y servicio en cada pieza."</p>
+<p>¡Te invitamos a conocer nuestro <a href="https://www.youtube.com/@examplestore" target="_blank" rel="noopener" title="Canal de Youtube Example Store">canal de YouTube</a> y nuestro <a href="https://www.example-store.com/blogs/informacion-general" title="Blog Técnico Example Store">blog técnico</a>!</p>
+
+<h4>Vehiculos</h4>
+<div style="overflow-x:auto;">
+<table>
+<thead>
+<tr><th>Marca</th><th>Modelo</th><th>Años</th><th>Transmisión</th><th>Motor / Drivetrain</th></tr>
+</thead>
+<tbody>
+<tr><td>[MARCA]</td><td>[MODELO]</td><td>[AÑOS]</td><td>[SPEED/DRIVETRAIN · CODIGO_TRANSMISION]</td><td>[MOTOR]</td></tr>
+</tbody>
+</table>
+</div>
+
+<!-- CRÍTICO: TABLA DE VEHÍCULOS - PRESERVAR TODOS LOS DATOS Y ORDEN ORIGINAL
+✓ REGLA ABSOLUTA: Incluir TODOS los vehículos de la "TABLA ORIGINAL DEL PRODUCTO" en el prompt
+✓ Si la tabla original tiene 11 vehículos (ej: SAMSUNG SM5/SM7, DONGFENG Yumsun), deben aparecer los 11
+✓ NO resumir ni eliminar vehículos por "espacio" o "relevancia"
+✓ El prompt incluye una sección "VEHÍCULOS COMPATIBLES (TABLA ORIGINAL)" - usar TODOS esos datos
+✓ **ORDEN CRÍTICO**: Mantener el MISMO ORDEN de filas que la tabla original (NO reordenes alfabéticamente)
+✓ VERIFICACIÓN: Contar vehículos en tabla original vs filas generadas - deben coincidir
+
+=== FORMATO JSON REQUERIDO ===
+{
+  "h1_title": "[Producto] [Transmisión] [Especificación clave] - ENTRE 50-60 caracteres exactos. NUNCA incluir SKU en h1_title. Usar elementos descriptivos: tipo de producto, transmisión, número de piezas, material, aplicación.",
+  "meta_title": "ORDEN ESTRICTO (60 chars MAX): (1) tipo producto genérico ('Pack Discos', 'Aceite', 'Banda', 'Kit'), (2) código transmisión + alias ('A44DE 03-72LE', 'ZF8HP 845RE'), (3) 2-3 marcas de vehículo (Ford, Toyota, Suzuki, Chrysler…). Marca del proveedor/fabricante (Allomatic, TSS, Sonnax, Raybestos) va SOLO si sobra espacio al final, NUNCA antes del código de transmisión. Marcas de motor/OEM reconocidas (Motorcraft, ZF, Mopar) pueden ir después del código si tienen búsqueda real. Append ' | Example Store' SOLO si ≤ 50 chars. Mexicans search 'disco a44de toyota', NOT 'disco allomatic example-store'. NUNCA incluir SKU en meta_title.",
+  "meta_description": "ORDEN ESTRICTO (150-160 chars): (1) tipo producto + código transmisión + alias en los primeros 40-50 chars ('Pack discos A44DE 03-72LE…'), (2) 'compatible con [Marca1], [Marca2], [Marca3] [año inicial]-[año final]' (3 marcas de vehículo con años), (3) beneficio técnico verificado (ej: 'alta fricción', 'OEM', 'durabilidad'), (4) 'SKU [sku]' o 'OEM [oem]' al final para búsquedas directas, (5) 'Envío México' como cierre. La marca del fabricante (Allomatic, TSS) va al final si queda espacio, NO al principio. Ejemplo: 'Pack discos A44DE 03-72LE para Suzuki, Toyota, Chevrolet 1992-2016. Alta fricción original. SKU KA25670C. Envío México.'",
+  "description_html": "string (HTML completo con estructura anterior)",
+  "alt_tags": [
+    "[producto]-[transmision]-vista-completa.jpg | [Descripción SEO 1]",
+    "[producto]-[detalle]-[marca].jpg | [Descripción SEO 2]",
+    "[producto]-oem-[numero].jpg | [Descripción SEO 3]",
+    "[producto]-[aplicacion].jpg | [Descripción SEO 4]",
+    "[producto]-[transmision]-[marca].jpg | [Descripción SEO 5]"
+  ],
+  "compatible_vehicles": "[Marca] [Modelo] ([Años], [Transmisión]), [Marca] [Modelo]...",
+  "short_description": "[Producto] [Transmisión]. [Beneficio principal]. SKU [sku].",
+  "meta_title": "ORDEN ESTRICTO: [Tipo Producto] [Código Trans + Alias] [2-3 Marcas Vehículo]. Supplier brand (Allomatic/TSS/Sonnax) al FINAL si cabe, NUNCA antes del código. ' | Example Store' solo si ≤50 chars. NUNCA SKU.",
+  "meta_description": "ORDEN: [Tipo Producto] [Código Trans + Alias] primero (40-50 chars), luego 'compatible con [3 Marcas Vehículo] [años]', beneficio técnico, SKU/OEM al final, 'Envío México' cierre. Marca fabricante NO va al principio.",
+  "url_handle": "[producto]-[transmision]-[modelo]",
+  "resumen": "<h4>Ficha Técnica</h4><div style=\"overflow-x:auto;\"><table style=\"width:100%;border-collapse:collapse;border:1px solid #ddd;\"><tbody><tr style=\"background-color:#f2f2f2;\"><th style=\"padding:10px;text-align:left;\">Dato</th><th style=\"padding:10px;text-align:left;\">Especificación</th></tr><tr><td style=\"padding:10px;\"><strong>SKU</strong></td><td style=\"padding:10px;\">[sku]</td></tr><tr><td style=\"padding:10px;\"><strong>Producto</strong></td><td style=\"padding:10px;\">[nombre producto]</td></tr><tr><td style=\"padding:10px;\"><strong>Transmisiones</strong></td><td style=\"padding:10px;\">[códigos transmisión del contexto]</td></tr><tr><td style=\"padding:10px;\"><strong>Años</strong></td><td style=\"padding:10px;\">[rango de años si disponible]</td></tr><tr><td style=\"padding:10px;\"><strong>Códigos Alternos</strong></td><td style=\"padding:10px;\">[códigos alternos si disponibles]</td></tr></tbody></table></div>"
+}
+
+=== EJEMPLO DE SALIDA OPTIMA ===
+{
+  "h1_title": "Disco Pasta TSS Overrun RE4F04A RE4F04B Avance Original",  // 58 chars - within 50-60 range
+  "description_html": "<h2>¿Cambios bruscos, sobrecalentamiento o código P0868 en transmisión ZF 8/9 velocidades?</h2><p>El <strong>Aceite ZF LifeguardFluid 8 ZF8HP ZF9HP</strong> es el fluido ATF original compatible con transmisiones automáticas ZF como <strong>ZF8HP45, ZF8HP55, ZF9HP48</strong>. Ayuda a mantener lubricación óptima y presión hidráulica en sistemas que muestran códigos DTC como P0868. Viscosidad a 100°C: 5.6 mm²/s.</p><p>Este repuesto de la marca <strong>ZF AFTERMARKET</strong> está fabricado con tecnología sintética para protección térmica y lubricación en <strong>transmisiones ZF 8/9 velocidades</strong>, ofreciendo rendimiento OEM. Marca: <strong>ZF AFTERMARKET</strong> (Calidad Original).</p><ul><li><strong>SKU:</strong> ZFLF8</li><li><strong>Número OEM Referencia:</strong> S671 090 312</li><li><strong>Tipo:</strong> Aceite ATF LifeguardFluid 8</li><li><strong>Ubicación:</strong> Caja de transmisión automática</li><li><strong>Compatibilidad:</strong> ZF9HP48, ZF8HP55A, ZF8HP55, ZF8HP50, ZF8HP45X, ZF8HP45, AL450, 845RE, 850RE</li><li><strong>Lo que incluye:</strong> 1 litro de aceite ZF LifeguardFluid 8</li><li><strong>Envíos:</strong> Express 1-2 días en todo México y envíos internacionales con DHL. Envío gratis en tu ciudad y en nuestras sucursales locales. Consulta la <a href=\"https://www.example-store.com/policies/shipping-policy\" title=\"Política de envíos\">política de envíos</a> para más detalles.</li></ul><h3>Guía de Instalación</h3><p>Instalación técnica: Drenar fluido viejo completamente, medir capacidad (generalmente 7-9L total), rellenar con LifeguardFluid 8 a través del puerto de llenado con herramienta de nivelación a 40°C. Requiere gato hidráulico, escáner OBD y equipo ZF. Advertencia de Seguridad: No mezclar con otros ATF; usar solo en transmisiones compatibles para evitar daños.</p><h3>Preguntas Frecuentes</h3><ul><li><strong>¿Qué aceite usar en transmisión ZF 8HP55 o ZF9HP48?</strong> El ZF LifeguardFluid 8 es recomendado por ZF para ZF8HP45, ZF8HP50, ZF8HP55 y ZF9HP48, con viscosidad 5.6 cSt @100°C para lubricación óptima y protección en altas temperaturas. Capacidad típica 7-9L.</li><li><strong>¿Es compatible LifeguardFluid 8 con Jeep Grand Cherokee o Audi Q7?</strong> Sí, compatible con Jeep Grand Cherokee 2011-2016 (ZF8HP55), Cherokee 2013-2016 (ZF9HP48), Audi A8 2009-2016 (ZF8HP FWD) y Q7 2010-2011 (ZF8HP AWD).</li><li><strong>¿Qué significa código P0868 en ZF8HP?</strong> P0868 indica presión baja en transmisión, a menudo por nivel bajo de fluido ATF o degradación. Este aceite ZF LifeguardFluid 8 es compatible con sistemas ZF8HP para ayudar a mantener presión hidráulica adecuada.</li><li><strong>¿Cómo cambiar aceite en transmisión ZF8HP?</strong> Drena fluido viejo, mide cantidad drenada, rellena con LifeguardFluid 8 al puerto a 40°C usando herramienta de nivel. Verifica con escáner OBD. No mezcles fluidos; usa 7-9L total según modelo.</li><li><strong>¿P0715 en ZF9HP48 indica problema de aceite?</strong> P0715 es error de sensor de temperatura del fluido ATF. Recomendado usar LifeguardFluid 8 compatible para mantener viscosidad y evitar sobrecalentamiento en ZF9HP48.</li><li><strong>¿Envíos a México?</strong> Express 1-2 días en todo México y envíos internacionales con DHL. Envío gratis en tu ciudad y en nuestras sucursales locales. Consulta la <a href=\"https://www.example-store.com/policies/shipping-policy\" title=\"Política de envíos\">política de envíos</a> para más detalles.</li></ul><p>En Example Store, especialistas en refacciones para transmisiones automáticas, ofrecemos calidad. \"Calidad y servicio en cada pieza.\"</p><p>¡Te invitamos a conocer nuestro <a href=\"https://www.youtube.com/@examplestore\" target=\"_blank\" rel=\"noopener\" title=\"Canal de Youtube Example Store\">canal de YouTube</a> y nuestro <a href=\"https://www.example-store.com/blogs/informacion-general\" title=\"Blog Técnico Example Store\">blog técnico</a>!</p><p>#AceiteTransmisionZF #LifeguardFluid8 #ZF8HP #ZF9HP #TransmisionAutomaticaZF</p><h4>Vehiculos</h4><div style=\"overflow-x:auto;\"><table><thead><tr><th>Marca</th><th>Modelo</th><th>Años</th><th>Transmisión</th><th>Motor / Drivetrain</th></tr></thead><tbody><tr><td>AUDI</td><td>A8</td><td>2009-2016</td><td>8 SP FWD · ZF8HP</td><td>V6 2.5L 3.0L</td></tr><tr><td>AUDI</td><td>Q7</td><td>2010-2011</td><td>8 SP R/4WD · ZF8HP</td><td>V6 3.6L</td></tr><tr><td>JEEP</td><td>CHEROKEE</td><td>2013-2016</td><td>9 SP F/4WD · ZF9HP48</td><td>L4 2.0L 2.4L V6 3.2L 3.6L</td></tr><tr><td>JEEP</td><td>GRAND CHEROKEE</td><td>2011-2016</td><td>8 SP R/4WD · ZF8HP55</td><td>V6 3.0L 3.6L</td></tr><tr><td>JEEP</td><td>RENEGADE</td><td>2014-2016</td><td>9 SP F/4WD · ZF9HP48</td><td>L4 1.4L 2.0L 2.4L</td></tr><tr><td>JEEP</td><td>WRANGLER UNLIMITED</td><td>2015-2016</td><td>8 SP 4WD · ZF8HP</td><td>V6 3.6L</td></tr></tbody></table></div>",
+  "alt_tags": [
+    "aceite-zf-lifeguardfluid8-vista-completa.jpg | Aceite transmisión automática ZF LifeguardFluid 8 1L vista completa botella",
+    "aceite-zf-lifeguardfluid8-detalle-etiqueta.jpg | Detalle etiqueta ZF LifeguardFluid 8 para transmisiones ZF8HP55 ZF9HP48",
+    "aceite-zf-lifeguardfluid8-oem-s671090312.jpg | Aceite ZF LifeguardFluid 8 OEM S671 090 312 compatible ZF8HP45 ZF8HP50"
+  ],
+  "compatible_vehicles": "Audi A8 (2009-2016, ZF8HP), Audi Q7 (2010-2011, ZF8HP), Jeep Cherokee (2013-2016, ZF9HP48), Jeep Grand Cherokee (2011-2016, ZF8HP55), Jeep Renegade (2014-2016, ZF9HP48), Jeep Wrangler Unlimited (2015-2016, ZF8HP) - NOTA: Incluir TODOS los vehículos del contexto RAG sin excepción",
+  "short_description": "Aceite ZF LifeguardFluid 8 transmisiones 8/9 velocidades. SKU ZFLF8, OEM S671090312. Fluido sintético original para máxima protección y cambios suaves.",
+  "meta_title": "Aceite ZF LifeguardFluid 8 ZF8HP Audi Jeep BMW",
+  "meta_description": "Aceite ATF ZF8HP ZF9HP 845RE 1L compatible Audi A8, Jeep Grand Cherokee, BMW 2009-2016. Viscosidad 5.6 cSt OEM. SKU ZFLF8 OEM S671090312. Envío México.",
+  "url_handle": "aceite-zf-lifeguardfluid-8-zf8hp-zf9hp"
+}
+
+=== CONTEXTO EXAMPLE STORE ===
+- Especialistas en refacciones para transmisiones automáticas
+- Líderes en refacciones para transmisiones automáticas
+- Garantía 1 año, envío express 1-2 días
+- YouTube: youtube.com/@examplestore
+- Blog: example-store.com/blogs/informacion-general
+- Envíos: example-store.com/policies/shipping-policy
+- Sucursales: example-store.com/pages/sucursales
+- Lema: "Calidad y servicio en cada pieza."
+
+=== REGLAS SEO/AEO/GEO (CRÍTICO PARA SCORE ALTO) ===
+
+**SEO (Target: 90-100)**
+- **H1 Title: EXACTAMENTE 50-60 caracteres** (REGLA ESTRICTA)
+  - REGLA: MINIMUM 50 caracteres, MAXIMUM 60 caracteres - NO excepciones
+  - Incluir: [Tipo de producto] + [Código Transmisión] + [Especificación clave] + [Marca si cabe]
+  - NUNCA incluir el SKU en el H1. El SKU no aporta valor SEO/AEO/GEO. En su lugar, usar elementos descriptivos que los clientes buscan: tipo de pieza, transmisión compatible, número de piezas/dientes, material, aplicación.
+  - ✓ BUENO: "Disco Acero Avance Directa 26D C6 E4OD 4R100 Ford" (51 chars - transmisión + aplicación)
+  - ✓ BUENO: "Disco Pasta TSS Overrun RE4F04A RE4F04B Avance Original" (55 chars - OEM ref + tipo)
+  - ✗ MAL: "Disco Acero 36305 C6 E4OD" (25 chars - SKU en título, muy corto)
+  - ✗ MAL: "36305 Disco Acero Avance Directa" (31 chars - SKU primero, desperdicia espacio)
+- **Meta Title: NUNCA incluir SKU** — usar [Producto] [Transmisión] | Example Store
+  - Si el H1 tiene menos de 50 caracteres, EXPANDIR agregando: códigos de transmisión, marca, o especificaciones
+  - Ejemplo expansión: "Aceite ZF 8HP" (13 chars) → "Aceite ZF LifeguardFluid 8 ZF8HP 1L" (37 chars, necesita más)
+  - Usar keywords de alto volumen del análisis (ej: "overrun", "RE4F04A", "RE4F04B")
+  - **NUNCA menos de 50 caracteres** - el sistema rechazará H1 muy cortos
+  - Mantener precisión: NO inventar especificaciones no verificadas
+- **Meta Title: EXACTAMENTE 50-60 caracteres** (Google trunca después de ~60). Priorizar: Producto + Transmisión + Marca
+- **Consistency**: H1 y Meta Title deben ser similares en longitud y keywords (ambos 50-60 caracteres)
+- Meta Description: 150-160 caracteres, incluir beneficios + SKU + Envío
+
+**IDIOMA Y TÉRMINOS - ESPAÑOL MEXICANO EXCLUSIVO**
+- **TODO el contenido debe estar en ESPAÑOL** - NUNCA usar palabras en inglés
+- ✗ PROHIBIDO: "Forward", "Drive", "Clutch", "Slippage", "Tip", "Kit", etc.
+- ✓ USAR: "avance" (no forward), "Drive" → "marcha" o "modalidad Drive", "embrague" (no clutch), "patinaje" (no slippage), "Consejo:" (no Tip:), "juego" o "kit de" (no Kit solo)
+- Usar terminología técnica mexicana:
+  - "Aceite de transmisión" (no "fluido ATF" solo, pero ATF sí como especificación técnica)
+  - "Caja de cambios" o "transmisión automática" (no "transmission")
+  - "Flecha" o "eje" (no "shaft")
+  - "Bandas" (no "belts" en contexto de transmisión)
+- Frases naturales mexicanas: "¿Tarda en engranar la marcha Drive?" → "¿Tarda en entrar la reversa?" o "¿Retrasa al cambiar a Drive?"
+
+**AEO - Answer Engine Optimization (Target: 80-100) ⚠️ MUY IMPORTANTE**
+- FAQ DEBE incluir preguntas tipo voice search ("¿Dónde...?", "¿Cómo...?", "¿Qué...?")
+- Cada pregunta FAQ debe responder en 40-60 palabras máximo
+- Usar lenguaje natural conversacional
+- Incluir códigos de error DTC (P0868, P0715, P0122, etc.) en preguntas
+
+**GEO - Generative Engine Optimization (Target: 80-100) ⚠️ MUY IMPORTANTE**
+- Mencionar explícitamente códigos de error DTC **VERIFICADOS EN EL CONTEXTO RAG** (ej: P0868 para aceite)
+- Incluir contexto de diagnóstico PRECISO: "Este aceite es compatible con sistemas que muestran error P0868" (NO "soluciona" ni "corrige")
+- Mencionar marcas de vehículos específicas **VERIFICADAS EN LA TABLA DE COMPATIBILIDAD** (Nissan, Audi, Jeep)
+- Incluir términos técnicos **VERIFICADOS EN EL CONTEXTO RAG**:
+  - Aceite: "viscosidad", "sintético", "fluido ATF", "cambio de aceite"
+  - Solenoide: "válvula solenoide", "módulo TCM", "cuerpo de válvulas"
+  - Filtro: "filtración", "micras", "contaminantes"
+- **NUNCA exagerar capacidades del producto** - usar lenguaje preciso: "compatible con", "recomendado para", "ayuda a mantener" (NO "soluciona", "corrige", "elimina")
+- **NO incluir términos de componentes diferentes** (ej: no mencionar "enfriador" si vendes solo aceite)
+
+=== REGLA FINAL ===
+SI NO RESPONDES CON JSON VÁLIDO, EL SISTEMA FALLARÁ.
+VERIFICA QUE TU RESPUESTA SEA JSON PURO ANTES DE ENVIAR."""
+
+    def _format_analysis_for_prompt(self, analysis_insights: Optional[Dict], product_name: str = "") -> str:
+        """Format analysis insights for inclusion in the user prompt with keyword relevance filtering"""
+        if not analysis_insights:
+            return "No hay análisis SEO/AEO/GEO disponible."
+
+        sections = []
+
+        # --- SEO ORGANIC SIGNALS (always first — highest priority instruction) ---
+        # Extract actual GSC/GA4 metrics from performance_vs_benchmark (backend-computed)
+        perf = analysis_insights.get("performance_vs_benchmark") or {}
+        metrics = perf.get("metrics") or {}
+        gsc_impressions = (metrics.get("impressions") or {}).get("product", 0)
+        gsc_position_raw = (metrics.get("position") or {}).get("product", 0)
+        gsc_sessions = (metrics.get("sessions") or {}).get("product", 0)
+        sold_30d = (metrics.get("sold_30d") or {}).get("product", 0)
+        sold_90d = (metrics.get("sold_90d") or {}).get("product", 0)
+        # performance_tier from backend-computed field (most reliable, set before Grok call)
+        performance_tier = analysis_insights.get("performance_tier", "DEVELOPING")
+
+        sections.append("=== SEÑALES ORGÁNICAS SEO (LEE ESTO PRIMERO — MÁXIMA PRIORIDAD) ===")
+        if gsc_sessions > 0 or gsc_position_raw > 0 or gsc_impressions > 0:
+            sections.append(
+                f"Este producto tiene {int(gsc_impressions):,} impresiones GSC, "
+                f"{int(gsc_sessions):,} sesiones GA4, "
+                f"posición {gsc_position_raw:.1f} en Google Search (tier: {performance_tier})."
+            )
+        if sold_30d > 0 or sold_90d > 0:
+            sections.append(
+                f"Ventas Shopify (todos los canales): {sold_30d} en 30d, {sold_90d} en 90d."
+            )
+        sections.append(
+            "Jerarquía de activos SEO a preservar (de más a menos crítico): "
+            "1) URL/handle — el cambio más destructivo posible; la URL es lo que Google indexa y acumula link equity. "
+            "2) Meta title — señal de ranking primaria en SERPs; determina para qué queries aparece el producto. "
+            "3) H1 title — señal de contenido, menos crítica que meta title para el ranking. "
+            "Si el producto ya tiene tráfico orgánico, los tres están funcionando — NO los cambies. "
+            "Si las métricas son débiles o cero, reescribir meta title y H1 es la acción de mayor impacto."
+        )
+        sections.append(
+            "Aplica esto proporcionalmente: cuanto más alto el tráfico y más fuerte la posición, "
+            "más debes ENRIQUECER (FAQ, tablas, specs, AEO) sin tocar URL, meta title ni H1. "
+            "Un producto que ya rankea no necesita que le cambies el título — necesita que le agregues contenido."
+        )
+        sections.append("")
+
+        # Scores
+        seo_score = analysis_insights.get('seo_score', 0)
+        aeo_score = analysis_insights.get('aeo_score', 0)
+        geo_score = analysis_insights.get('geo_score', 0)
+        sections.append(f"Puntuaciones actuales: SEO={seo_score}/100, AEO={aeo_score}/100, GEO={geo_score}/100")
+
+        # Primary issue
+        primary_issue = analysis_insights.get('primary_issue', {})
+        if primary_issue and primary_issue.get('type') not in (None, 'No issues found'):
+            sections.append(f"\nDiagnóstico: {primary_issue.get('type')} — {primary_issue.get('description', '')}")
+            if primary_issue.get('why'):
+                sections.append(f"Por qué: {primary_issue.get('why', '')}")
+
+        # Recommendations (Grok deep analysis format: action/implementation/expected_impact)
+        recommendations = analysis_insights.get('recommendations') or analysis_insights.get('suggestions', [])
+        if recommendations:
+            sections.append("\n=== RECOMENDACIONES GROK (IMPLEMENTAR EN ESTE CONTENIDO) ===")
+            for i, rec in enumerate(recommendations[:5], 1):
+                if isinstance(rec, dict):
+                    priority = rec.get('priority', 'medium').upper()
+                    category = rec.get('category', '').upper()
+                    action = rec.get('action', rec.get('title', rec.get('description', '')))
+                    impact = rec.get('expected_impact', '')
+                    impl = rec.get('implementation', rec.get('implementation_steps', ''))
+                    sections.append(f"{i}. [{priority}/{category}] {action}")
+                    if impact:
+                        sections.append(f"   Impacto esperado: {impact}")
+                    if impl:
+                        impl_text = impl if isinstance(impl, str) else '; '.join(impl[:2])
+                        sections.append(f"   Cómo: {impl_text}")
+                else:
+                    sections.append(f"{i}. {rec}")
+
+        # Keyword opportunities (filtered by product type relevance)
+        keyword_opps = analysis_insights.get('keyword_opportunities', [])
+        if keyword_opps:
+            sections.append("\nKeywords prioritarias (usar en título, descripción, FAQ):")
+            product_lower = product_name.lower()
+            is_oil = any(w in product_lower for w in ['aceite', 'fluid', 'oil'])
+            is_solenoide = any(w in product_lower for w in ['solenoide', 'sensor'])
+            is_filtro = any(w in product_lower for w in ['filtro', 'filter'])
+            irrelevant_terms = (
+                ['enfriador', 'cooler', 'radiador', 'intercambiador'] if is_oil else
+                ['aceite', 'oil', 'fluido', 'filtro', 'filter'] if is_solenoide else
+                ['solenoide', 'sensor', 'valvula'] if is_filtro else []
+            )
+            relevant = [
+                kw for kw in keyword_opps
+                if not any(t in (kw.get('term', '') if isinstance(kw, dict) else str(kw)).lower() for t in irrelevant_terms)
+            ]
+            for kw in relevant[:5]:
+                if isinstance(kw, dict):
+                    sections.append(f"- {kw.get('term', kw.get('query', ''))}: {kw.get('impressions', kw.get('volume', 0))} impresiones")
+                else:
+                    sections.append(f"- {kw}")
+
+        # AEO questions (voice search targets — use these as FAQ questions)
+        aeo_questions = analysis_insights.get('aeo_questions') or analysis_insights.get('question_targets', [])
+        if aeo_questions:
+            sections.append("\nPreguntas AEO para FAQ (voice search — incluir TODAS en el contenido):")
+            for q in aeo_questions[:5]:
+                sections.append(f"- {q}")
+
+        # Top opportunity queries from GSC
+        top_queries = analysis_insights.get('top_queries', [])
+        if top_queries:
+            sections.append("\nConsultas GSC con mayor oportunidad:")
+            for q in top_queries[:3]:
+                if isinstance(q, dict):
+                    sections.append(f"- '{q.get('query', '')}': {q.get('impressions', 0)} imp, pos {q.get('position', '?')}, oportunidad {q.get('opportunity', '')}")
+                else:
+                    sections.append(f"- {q}")
+
+        # Competitor / GEO gaps
+        competitor = analysis_insights.get('competitor_analysis', {})
+        if competitor:
+            sections.append("\nBrechas competitivas (mencionar en contenido para GEO):")
+            if competitor.get('gap_summary'):
+                sections.append(f"- {competitor['gap_summary']}")
+            for comp in (competitor.get('top_competitors') or [])[:3]:
+                if isinstance(comp, dict):
+                    sections.append(f"- Competidor: {comp.get('domain', comp.get('query', ''))}")
+
+        return "\n".join(sections) if sections else "Análisis disponible pero sin datos estructurados."
+
+    def _build_user_prompt(self, product_info: Dict, context: List[Dict], performance_data: Optional[Dict] = None, analysis_insights: Optional[Dict] = None) -> str:
+        product_name = product_info.get('title', '')
+        sku = product_info.get('sku', '')
+        description = product_info.get('description', product_info.get('body_html', ''))
+        vendor = product_info.get('vendor', '')
+        product_type = product_info.get('product_type', '')
+        tags = product_info.get('tags', [])
+        images = product_info.get('image_filenames', product_info.get('images', []))
+        meta_title = product_info.get('meta_title', product_info.get('seo', {}).get('title', ''))
+        meta_description = product_info.get('meta_description', product_info.get('seo', {}).get('description', ''))
+        handle = product_info.get('handle', '')
+
+        # Transmission alias block — expand query coverage by telling the LLM
+        # about every known equivalent code for the transmission in this product.
+        # Different OEMs sell the same unit under different names; each alias is
+        # an extra query bucket the product can win.
+        transmission_alias_block = ""
+        aliases = product_info.get('transmission_aliases', []) or []
+        if len(aliases) >= 2:
+            transmission_alias_block = f"""
+
+=== CÓDIGOS EQUIVALENTES DE TRANSMISIÓN (usar TODOS) ===
+Esta transmisión se vende bajo estos nombres equivalentes en distintos OEMs:
+{', '.join(aliases)}
+
+**REGLA**: Al escribir H1, meta_title, meta_description y description_html:
+- Menciona SIEMPRE el código principal (el que aparece en el título del producto)
+- Incluye al menos UN código equivalente en la meta_description y en una FAQ
+- En la descripción body, usa 2-3 equivalentes naturalmente (ej: "A44DE, también conocida como 03-72LE en aplicaciones Toyota")
+- El objetivo: capturar búsquedas por CUALQUIER nombre que use el mecánico, sin importar el OEM
+"""
+
+        # Vehicle fitment source priority:
+        #   1. Structured fitments from Shopify metaobjects (has transmission_model code)
+        #   2. Fallback: parse the old description HTML (text-only, no transmission code)
+        # Structured is preferred because it carries JF506E / A604 / ZF8HP codes
+        # that the raw HTML rarely contains.
+        def _flatten_field(v) -> str:
+            """Shopify metaobjects can return string, list, or None for any
+            given field. Normalise to a clean string safely."""
+            if v is None:
+                return ''
+            if isinstance(v, list):
+                # lists are multi-select values — join them with ' / '
+                return ' / '.join(str(x).strip() for x in v if x is not None and str(x).strip())
+            return str(v).strip()
+
+        original_vehicles_text = ""
+        structured_fitments = product_info.get('vehicle_fitments', []) or []
+        if structured_fitments and isinstance(structured_fitments, list):
+            lines = []
+            for f in structured_fitments:
+                if not isinstance(f, dict):
+                    continue
+                make = _flatten_field(f.get('make'))
+                modelo = _flatten_field(f.get('modelo') or f.get('model'))
+                y_start = f.get('year_start') or ''
+                y_end = f.get('year_end') or ''
+                if y_start and y_end and y_start != y_end:
+                    years = f"{y_start}-{y_end}"
+                elif y_start or y_end:
+                    years = str(y_start or y_end)
+                else:
+                    years = ''
+                trans_type = _flatten_field(f.get('transmission_type'))
+                trans_model = _flatten_field(f.get('transmission_model'))
+                # Transmisión column combines speed/drivetrain type + model code
+                # e.g. "4 SP R/4WD · JF506E" or just "4 SP R/4WD" when no code exists
+                trans_col = ' · '.join([p for p in [trans_type, trans_model] if p]) or '—'
+                engine = _flatten_field(f.get('engine')) or '—'
+                lines.append(f"- {make} | {modelo} | {years} | {trans_col} | {engine}")
+            if lines:
+                original_vehicles_text = f"""
+
+=== VEHÍCULOS COMPATIBLES (DATOS ESTRUCTURADOS DE SHOPIFY) ===
+Formato: MARCA | MODELO | AÑOS | TRANSMISIÓN | MOTOR
+{chr(10).join(lines)}
+
+**INSTRUCCIÓN CRÍTICA — TABLA DE VEHÍCULOS**:
+1. La tabla generada DEBE tener 5 columnas: Marca | Modelo | Años | Transmisión | Motor / Drivetrain
+2. La columna **Transmisión** es la MÁS IMPORTANTE para este negocio (tienda de transmisiones).
+   Cuando el dato incluye un código (JF506E, A604, ZF8HP, 4L60E, etc.), DEBE aparecer en esa columna.
+3. Incluye TODOS los vehículos listados arriba, sin omitir ninguno.
+4. Mantén el MISMO ORDEN de filas que la lista anterior (NO reordenes alfabéticamente).
+"""
+        elif description:
+            # Legacy fallback: parse the existing description HTML. Works for
+            # products whose Shopify metaobjects aren't populated yet; the
+            # downside is the transmission model code usually isn't present.
+            vehicles_match = re.search(
+                r'<h4[^>]*>\s*Veh[ií]culos[^<]*</h4>(.*?)(?=<h\d|$)',
+                description,
+                re.IGNORECASE | re.DOTALL
+            )
+            if vehicles_match:
+                vehicles_section = vehicles_match.group(1)
+                vehicles_clean = re.sub(r'<[^>]+>', ' ', vehicles_section)
+                vehicles_clean = re.sub(r'\s+', ' ', vehicles_clean).strip()
+                if vehicles_clean:
+                    original_vehicles_text = f"""
+
+=== VEHÍCULOS COMPATIBLES (TABLA ORIGINAL DEL PRODUCTO) ===
+{vehicles_clean}
+
+**INSTRUCCIÓN CRÍTICA**: La tabla anterior contiene la lista COMPLETA de vehículos compatibles
+según la descripción original. Debes incluir TODOS estos vehículos en la nueva tabla.
+La tabla generada DEBE tener 5 columnas: Marca | Modelo | Años | Transmisión | Motor / Drivetrain.
+Si el dato original combina transmisión y motor (ej: "4 SP R/4WD L4 2.0L"), separa el número de
+velocidades + tipo de tracción en la columna Transmisión y el motor en su propia columna.
+**ORDEN**: Mantén el MISMO ORDEN de filas que la tabla original (NO reordenes alfabéticamente).
+"""
+
+        context_text = ""
+        for idx, ctx in enumerate(context[:(5 if not original_vehicles_text else 4)]):
+            payload = ctx.get('payload', {})
+            source = payload.get('source_filename', payload.get('supplier', 'N/A'))
+            content_raw = payload.get('content', payload.get('text', ''))
+            # Analysis insights chunk gets full content — everything else is truncated to 500 chars
+            content_preview = content_raw if source == 'grok_analysis_insights' else content_raw[:500] + ('...' if len(content_raw) > 500 else '')
+            context_text += f"\n\nContexto RAG {idx + 1} (Fuente: {source}):\n"
+            context_text += f"Contenido: {content_preview}\n"
+
+            if payload.get('product_name'):
+                context_text += f"Nombre: {payload.get('product_name', '')}\n"
+            if payload.get('part_number'):
+                context_text += f"Número de Parte: {payload.get('part_number', '')}\n"
+            if payload.get('transmission_code'):
+                context_text += f"Código de Transmisión: {payload.get('transmission_code', '')}\n"
+
+            specs = payload.get('specifications', {})
+            if specs:
+                context_text += f"Especificaciones: {json.dumps(specs, ensure_ascii=False)}\n"
+
+            vehicles = payload.get('compatible_vehicles', [])
+            if vehicles:
+                context_text += "Vehículos Compatibles:\n"
+                for v in vehicles:
+                    context_text += f"  - {v.get('make', '')} {v.get('model', '')} ({v.get('years', '')})\n"
+
+        prompt = f"""Genera contenido SEO optimizado para el siguiente producto de Shopify:
+
+=== INFORMACIÓN DEL PRODUCTO ===
+Título: {product_name}
+SKU: {sku}
+Vendor/Marca: {vendor}
+Tipo de Producto: {product_type}
+Handle URL actual: {handle}
+
+=== ETIQUETAS (TAGS) ===
+{', '.join(tags) if isinstance(tags, list) else tags}
+
+=== DESCRIPCIÓN ACTUAL ===
+{description[:5000] if description else 'Sin descripción actual'}
+{original_vehicles_text}
+{transmission_alias_block}
+
+=== META INFORMACIÓN ACTUAL ===
+Meta Título: {meta_title or 'No definido'}
+Meta Descripción: {meta_description or 'No definida'}
+
+=== IMÁGENES DISPONIBLES ({len(images) if isinstance(images, list) else 0}) ===
+{', '.join(str(img) for img in images[:5]) if isinstance(images, list) else images}
+
+=== CONTEXTO RAG (CONOCIMIENTO DE LA BASE DE DATOS) ===
+{context_text if context_text else 'No se encontró contexto adicional en la base de conocimiento.'}
+
+=== LIVE SEARCH PERFORMANCE DATA (GSC/GA4) ===
+{json.dumps(performance_data, ensure_ascii=False) if performance_data else 'No hay datos de rendimiento disponibles.'}
+
+=== ANÁLISIS GROK SEO/AEO/GEO ===
+{self._format_analysis_for_prompt(analysis_insights, product_name)}
+
+=== INSTRUCCIONES PRIORITARIAS PARA SCORES ALTO ===
+
+**CRÍTICO - AEO (Answer Engine Optimization)**: Target 80-100
+- La sección FAQ DEBE tener 5 preguntas MÍNIMO
+- Cada pregunta debe ser tipo voice search: "¿Dónde se pone...?", "¿Cómo cambiar...?", "¿Qué pasa si...?"
+- Incluir CÓDIGOS DE ERROR DTC en las preguntas: P0868, P0715, P0122, etc.
+- Respuestas de 40-60 palabras máximo, lenguaje conversacional
+- Ejemplo: "¿Dónde se pone el aceite de transmisión ZF 8HP?" → Respuesta paso a paso
+
+**CRÍTICO - GEO (Generative Engine Optimization)**: Target 80-100  
+- En el primer párrafo, mencionar EXPLÍCITAMENTE códigos de error DTC **RELEVANTES** (ej: P0868 para aceite de transmisión)
+- Incluir contexto de diagnóstico SOLO si aplica: "Este aceite ayuda a prevenir el error P0868..."
+- Mencionar marcas específicas en el texto: "Compatible con Nissan, Audi, Jeep..."
+- Agregar términos técnicos **RELEVANTES AL PRODUCTO**:
+  - Si es ACEITE: "viscosidad", "fluido ATF", "nivel de aceite", "cambio de fluido"
+  - Si es SOLENOIDE: "válvula solenoide", "cuerpo de válvulas", "presión hidráulica"
+  - Si es FILTRO: "filtración", "micras", "partículas"
+- **NUNCA mezclar términos de componentes diferentes** (ej: no mencionar "enfriador" si vendes aceite)
+
+**CRÍTICO - SEO**: Target 90-100
+- **H1 Title: EXACTAMENTE 50-60 caracteres** (REGLA ESTRICTA - NO negociable)
+   - MINIMUM 50 caracteres, MAXIMUM 60 caracteres
+   - Si el H1 tiene menos de 50 caracteres, es INVÁLIDO y debe expandirse
+   - Incluir keywords de alto volumen del análisis Grok (ej: "aceite para transmisión automá", "p0868")
+   - Agregar códigos de transmisión relevantes (ZF8HP, ZF9HP) del contexto RAG
+   - Mantener especificaciones técnicas verificadas (1L)
+   - ✓ BUENO: "Aceite ZF LifeguardFluid 8 ZF8HP 1L" (37 chars - NECESITA MÁS: "Aceite ZF LifeguardFluid 8 ZF8HP 55 1L Tienda" = 47 chars - aún necesita más)
+   - ✓ ÓPTIMO: "Aceite Sintético ZF LifeguardFluid 8 ZF8HP 1L Compatible" (53 chars - perfecto)
+   - ✗ MAL: "Aceite ZF LifeguardFluid 8" (28 chars - muy corto, penalización SEO)
+   - ✗ MAL: "Aceite ZF LifeguardFluid 8 ZF8HP ZF9HP 1L - 8/9 Velocidades" (74 chars - excede límite)
+   - **REGLA ESTRICTA: 50-60 caracteres exactos, ni más ni menos**
+   - NO inventar información no verificada en el contexto
+- **Meta Title: EXACTAMENTE 50-60 caracteres máximo** (Google trunca después de ~60)
+- **Consistency**: H1 y Meta Title deben tener longitud similar (ambos 50-60 caracteres) para mejor SEO
+  - ✓ BUENO: "Aceite ZF LifeguardFluid 8 ZF8HP | Example Store" (46 chars)
+  - ✗ MAL: "Aceite Transmisión ZF LifeguardFluid 8 1L para ZF8HP ZF9HP | Soluciona P0868 Nissan" (75+ chars - truncado!)
+- Meta Description: 150-160 caracteres, SKU + beneficios + "Envío express"
+- Tabla de vehículos: Mínimo 5 filas con columnas completas
+
+**BALANCE ENTRE OPTIMIZACIÓN Y PRECISIÓN**:
+- **SEO/AEO/GEO son IMPORTANTES**, pero la **VERACIDAD es PRIMORDIAL**
+- Un producto con información falsa genera **devoluciones y mala reputación**
+- Mejor un contenido ligeramente menos optimizado pero **100% veraz**
+- Usa el **CONTEXTO RAG** como fuente de verdad para especificaciones
+
+1. **OPTIMIZAR H1 Y DESCRIPCIÓN CON TODOS LOS DATOS**:
+   - **H1**: Optimizar con **EXACTAMENTE 50-60 caracteres** usando keywords del análisis Grok + datos del contexto RAG
+     - REGLA ESTRICTA: MINIMO 50 caracteres, MAXIMO 60 caracteres - NO excepciones
+     - Si el H1 generado tiene menos de 50 caracteres, es INVÁLIDO - debe expandirse
+     - Estrategia de expansión: Agregar tipo de producto, códigos de transmisión adicionales, marca, o especificaciones
+     - ✓ ÓPTIMO: "Disco Pasta TSS Overrun RE4F04A RE4F04B Avance" (52 chars - perfecto)
+     - ✗ MAL: "Disco Pasta TSS Avance RE4F04A 32D" (34 chars - muy corto, penalización SEO)
+     - EJEMPLO DE EXPANSIÓN: "Aceite ZF 8HP" (13 chars) → "Aceite ZF LifeguardFluid 8 ZF8HP 1L Compatible" (48 chars - aún necesita +2)
+     - **NUNCA menos de 50 caracteres** - el sistema rechazará H1 muy cortos
+   - **Description HTML**: Crear contenido rico usando:
+     - Keywords de alto volumen del análisis ("aceite para transmisión automá", "p0868")
+     - Preguntas AEO del análisis para la sección FAQ
+     - Especificaciones técnicas verificadas del contexto RAG
+     - Tabla de compatibilidad vehicular del contexto
+   - **Meta Description**: Optimizar con keywords principales + SKU + CTA
+
+2. **PRIORIDAD ABSOLUTA - USAR DATOS VERIFICADOS**:
+   - Especificaciones técnicas: **SOLO del contexto RAG** (viscosidad, capacidad, OEM)
+   - Códigos de error: **SOLO si están verificados** en el contexto
+    - **CRÍTICO - Compatibilidad vehicular: INCLUIR TODOS los vehículos de la TABLA ORIGINAL en el MISMO ORDEN**
+      - En el prompt se incluye la sección "VEHÍCULOS COMPATIBLES (TABLA ORIGINAL DEL PRODUCTO)"
+      - Ejemplo: Si la tabla original lista 11 vehículos (incluyendo SAMSUNG SM5/SM7, DONGFENG Yumsun), deben aparecer los 11
+      - **ORDEN CRÍTICO**: Mantener el MISMO ORDEN de filas que la tabla original (NO reordenes alfabéticamente)
+      - **NO omitir vehículos** por espacio, relevancia percibida o cualquier otro motivo
+   - **NUNCA inventar** especificaciones no presentes en el contexto
+
+3. **IDIOMA ESPAÑOL MEXICANO EXCLUSIVO**:
+   - **NUNCA usar palabras en inglés** - todo el contenido debe ser 100% español
+   - ✗ PROHIBIDO: "Forward", "Drive", "Clutch", "Slippage", "Tip", "Kit" como sustantivo solo
+   - ✓ USAR: "avance" (no forward), "marcha" o "modalidad" (no Drive solo), "embrague" (no clutch), "patinaje" (no slippage), "Consejo:" (no Tip:), "juego de" o "kit de" (no Kit solo)
+   - Frases naturales mexicanas, no traducciones literales del inglés
+   - Ejemplo: "¿Tarda en engranar Drive?" → "¿Tarda en entrar la reversa?" o "¿Retrasa al cambiar a Drive?"
+
+4. **OPTIMIZACIÓN CON LÍMITES**:
+   - Usar keywords del análisis **solo si son relevantes y verificables**
+   - Mentionar códigos de error con lenguaje PRECISO: "compatible con" / "recomendado para" (NO "soluciona", "corrige")
+   - **FILTRAR keywords NO relevantes**: ignorar términos de componentes diferentes
+
+5. **ESTRUCTURA OBLIGATORIA**: Genera JSON con TODOS los campos según el system prompt
+
+6. **REGLA DE ORO - VERACIDAD SOBRE OPTIMIZACIÓN**:
+   - Si no estás SEGURO de una especificación, **NO la incluyas**
+   - Es mejor omitir una keyword que inventar información falsa
+   - El contenido debe ser **útil para el cliente** (reduce devoluciones)"""
+
+        return prompt
+
+    def _get_fallback_content(self, product_info: Dict, context: Optional[List[Dict]] = None, analysis_insights: Optional[Dict] = None, performance_data: Optional[Dict] = None) -> Dict:
+        """
+        Generate rich fallback content using all available data:
+        - Product info (Shopify)
+        - Web search results (specs, features)
+        - AI analysis insights (SEO issues, suggestions)
+        - Performance data (sales, trends)
+        """
+        import re
+        product_name = product_info.get('title', '')
+        sku = product_info.get('sku', '')
+        description = product_info.get('description', '') or product_info.get('body_html', '')
+        vendor = product_info.get('vendor', 'Example Store')
+        
+        # Extract rich context from web search and analysis
+        web_specs = []
+        search_snippets = []
+        seo_suggestions = []
+        competitor_insights = []
+        
+        if context:
+            for ctx in context:
+                payload = ctx.get('payload', {})
+                source = payload.get('source_type', payload.get('supplier', ''))
+                content = payload.get('content', '')
+                
+                if source == 'web_search':
+                    # Extract specs from web search results
+                    search_snippets.append(content)
+                    # Look for specifications in the content
+                    spec_patterns = [
+                        r'(\d+\s*(?:hp|HP| velocidades?|speed|litros?|L|ml|ccm))',
+                        r'((?:oem|OEM|original|compatibles?|para|for)\s+[^.\n]+)',
+                        r'((?:garant[ií]a|warranty)\s+[^.\n]+)',
+                    ]
+                    for pattern in spec_patterns:
+                        matches = re.findall(pattern, content, re.IGNORECASE)
+                        web_specs.extend(matches)
+        
+        # Extract analysis insights
+        if analysis_insights:
+            if 'suggestions' in analysis_insights:
+                seo_suggestions = analysis_insights['suggestions']
+            if 'primary_issue' in analysis_insights:
+                issue = analysis_insights['primary_issue']
+                if issue.get('type') != 'No issues found':
+                    seo_suggestions.insert(0, f"Priority: {issue.get('type')} - {issue.get('description', '')}")
+            if 'competitor_analysis' in analysis_insights:
+                comp = analysis_insights['competitor_analysis']
+                if comp.get('gap_summary'):
+                    competitor_insights.append(comp['gap_summary'])
+        
+        # SEO-optimized URL handle generator
+        def generate_seo_url_handle(product_name: str) -> str:
+            """Generate SEO-optimized URL handle from product name"""
+            text_lower = product_name.lower()
+            
+            # Common product type keywords
+            product_types = {
+                'aceite': 'aceite-transmision',
+                'filtro': 'filtro-transmision',
+                'carter': 'carter-transmision',
+                'cuerpo valvulas': 'cuerpo-valvulas',
+                'cuerpo de valvulas': 'cuerpo-valvulas',
+                'solenoide': 'solenoide',
+                'sensor': 'sensor',
+                'bomba': 'bomba-aceite',
+                'convertidor': 'convertidor-torque',
+                'banda': 'banda-transmision',
+                'kit': 'kit-reparacion',
+                'modulo': 'modulo-control',
+            }
+            
+            # Find product type
+            product_type_slug = None
+            for keyword, slug in sorted(product_types.items(), key=lambda x: -len(x[0])):
+                if keyword in text_lower:
+                    product_type_slug = slug
+                    break
+            
+            # Extract transmission code
+            trans_code_match = re.search(
+                r'(ZF\d+HP\d+|\d+[LR]\d{2}[EW]?|[A-Z]{2}\d{3}[A-Z]*|\d{3}RE)',
+                product_name, re.IGNORECASE
+            )
+            trans_code = trans_code_match.group(0).upper() if trans_code_match else None
+            
+            # Build URL parts
+            url_parts = []
+            if product_type_slug:
+                url_parts.append(product_type_slug)
+            if trans_code:
+                url_parts.append(trans_code.lower())
+            
+            # Add remaining significant words if URL is too short
+            if len('-'.join(url_parts)) < 30:
+                stop_words = {'de', 'la', 'el', 'en', 'y', 'o', 'para', 'con', 'sin', 'un', 'una', 'los', 'las', 'al', 'del'}
+                # Simple slugify for remaining words
+                text = product_name.lower()
+                text = text.replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u').replace('ñ', 'n')
+                text = re.sub(r'[^a-z0-9\s-]', '', text)
+                words = [w for w in text.split() if w and w not in stop_words and len(w) > 2]
+                existing = '-'.join(url_parts)
+                for word in words[:5]:
+                    if word not in existing and len(existing + '-' + word) < 100:
+                        url_parts.append(word)
+                        existing = '-'.join(url_parts)
+            
+            url_handle = '-'.join(url_parts)
+            url_handle = re.sub(r'-+', '-', url_handle).strip('-')[:100]
+            
+            # Fallback to simple slug
+            if not url_handle:
+                text = product_name.lower()
+                text = text.replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u').replace('ñ', 'n')
+                text = re.sub(r'[^a-z0-9\s-]', '', text)
+                text = re.sub(r'\s+', '-', text.strip())
+                url_handle = re.sub(r'-+', '-', text)[:100]
+            
+            return url_handle
+        
+        url_handle = generate_seo_url_handle(product_name) if product_name else (sku.lower().replace(' ', '-') if sku else 'producto')
+        
+        # === BUILD RICH DESCRIPTION WITH ALL DATA SOURCES ===
+        
+        # 1. Build hook question from search data + product type
+        product_type = "pieza de transmisión automática"
+        if 'aceite' in product_name.lower():
+            product_type = "aceite de transmisión"
+        elif 'filtro' in product_name.lower():
+            product_type = "filtro de transmisión"
+        elif 'solenoide' in product_name.lower():
+            product_type = "solenoide de transmisión"
+        elif 'cuerpo' in product_name.lower():
+            product_type = "cuerpo de válvulas"
+        
+        # Extract transmission code for hook
+        trans_code_match = re.search(r'(ZF\d+HP\d+|\d+[LR]\d{2}[EW]?|[A-Z]{2}\d{3}[A-Z]*|\d{3}RE)', product_name, re.IGNORECASE)
+        trans_code = trans_code_match.group(0) if trans_code_match else "tu transmisión"
+        
+        hook_questions = [
+            f"¿Problemas con el rendimiento de {trans_code}?",
+            f"¿Buscas el mejor {product_type} para {trans_code}?",
+            f"¿Necesitas reemplazar el {product_type} de tu {trans_code}?",
+            f"¿Quieres evitar daños costosos en {trans_code}?"
+        ]
+        hook = hook_questions[hash(product_name) % len(hook_questions)]
+        
+        # 2. Build technical specs from web data + product info
+        tech_specs = [f"Marca: {vendor}", f"SKU: {sku}", "Garantía: 1 año", "Calidad OEM garantizada"]
+        if web_specs:
+            # Add unique specs from web search (limit to 3)
+            unique_specs = list(dict.fromkeys([s for s in web_specs if len(s) > 3]))[:3]
+            tech_specs.extend(unique_specs)
+        
+        # 3. Build benefits from analysis insights
+        benefits = []
+        if seo_suggestions:
+            # Turn SEO suggestions into benefits
+            for suggestion in seo_suggestions[:2]:
+                if 'keywords' in suggestion.lower():
+                    benefits.append("Optimizado con keywords relevantes para mejor posicionamiento")
+                elif 'description' in suggestion.lower():
+                    benefits.append("Descripción técnica detallada para tomar decisiones informadas")
+                elif 'title' in suggestion.lower():
+                    benefits.append("Título SEO optimizado para mayor visibilidad en búsquedas")
+        
+        if not benefits:
+            benefits = [
+                "Compatible con especificaciones OEM originales",
+                "Testado en condiciones reales de operación",
+                "Soporte técnico especializado incluido"
+            ]
+        
+        # 4. Build FAQ from search snippets
+        faq_items = [
+            {"question": f"¿Este {product_type} es compatible con {trans_code}?", 
+             "answer": f"Sí, este producto está diseñado específicamente para transmisiones {trans_code}. Verifique las especificaciones técnicas o consulte con nuestro equipo para confirmar la compatibilidad exacta de su vehículo."},
+            {"question": "¿Cuánto tarda el envío?", 
+             "answer": "Envío express 1-2 días hábiles a todo México. Disponible envío same-day en CDMX y área metropolitana para pedidos antes de las 12:00 hrs."},
+            {"question": "¿Qué garantía tiene este producto?", 
+             "answer": "1 año de garantía contra defectos de fabricación. Garantía de satisfacción: si no es lo que esperabas, devolución en 30 días."}
+        ]
+        
+        # Add web-search derived FAQ if available
+        if search_snippets:
+            faq_items.append({
+                "question": f"¿Por qué elegir {product_name} sobre otras opciones?",
+                "answer": f"Basado en especificaciones técnicas y reseñas del mercado, {product_name} ofrece rendimiento superior y compatibilidad garantizada. {web_specs[0] if web_specs else 'Calidad OEM verificada'}."
+            })
+        
+        # 5. Build compatible vehicles section
+        compatible_vehicles = f"Compatible con transmisiones {trans_code}. " if trans_code != "tu transmisión" else ""
+        compatible_vehicles += "Consulte la guía de compatibilidad detallada o contacte a nuestros asesores técnicos para verificar el ajuste exacto con su modelo específico."
+        
+        # 6. Build rich HTML description
+        benefits_html = "\n".join([f"<li>✓ {b}</li>" for b in benefits[:3]])
+        specs_html = "\n".join([f"<li><strong>{s.split(':')[0]}:</strong> {s.split(':', 1)[1] if ':' in s else s}</li>" for s in tech_specs])
+        
+        description_html = f"""<h2>{hook}</h2>
+<p>El <strong>{product_name}</strong> es la solución profesional que necesitas para mantener tu transmisión en condiciones óptimas. En <strong>Example Store</strong> ofrecemos piezas de la más alta calidad con garantía de satisfacción.</p>
+
+<h3>Beneficios Clave</h3>
+<ul>
+{benefits_html}
+<li>✓ Envío express 1-2 días a todo México</li>
+<li>✓ Asesoría técnica especializada gratuita</li>
+</ul>
+
+<h3>Especificaciones Técnicas</h3>
+<ul>
+{specs_html}
+</ul>
+
+<h3>¿Por qué comprar en Example Store?</h3>
+<p>Somos especialistas en transmisiones automáticas con más de 10 años de experiencia. Todos nuestros productos son probados y verificados para garantizar el mejor rendimiento. <strong>¡No arriesgues tu transmisión con piezas de dudosa procedencia!</strong></p>
+
+<p>📦 <strong>Envío gratis</strong> en compras mayores a $1,500<br>
+🔧 <strong>Soporte técnico</strong> post-venta incluido<br>
+💯 <strong>Garantía de satisfacción</strong> o devolución</p>"""
+
+        # 7. Build meta description with rich data
+        meta_desc_parts = [product_name[:60]]
+        if web_specs:
+            meta_desc_parts.append(web_specs[0][:30])
+        meta_desc_parts.extend([f"{vendor}", "Garantía 1 año", "Envío express México"])
+        meta_description = ". ".join(meta_desc_parts)[:160]
+        
+        # 8. Build short description
+        short_desc_parts = [product_name[:70]]
+        if trans_code != "tu transmisión":
+            short_desc_parts.append(f"para {trans_code}")
+        short_desc_parts.extend([f"{vendor}", "Calidad OEM", "Envío express 1-2 días"])
+        short_description = ". ".join(short_desc_parts)[:160]
+        
+        # Build fallback resumen (ficha técnica) table
+        _ptype_fc = product_info.get('product_type', 'Parte de Transmisión')
+        _rows_fc = [
+            ('SKU', sku or 'N/A'),
+            ('Producto', product_name or 'N/A'),
+            ('Marca', vendor or 'N/A'),
+            ('Tipo', _ptype_fc or 'N/A'),
+            ('Garantía', '1 año'),
+        ]
+        _rows_html_fc = ''.join(
+            f'<tr><td style="padding:10px;border:1px solid #ddd;"><strong>{lbl}</strong></td>'
+            f'<td style="padding:10px;border:1px solid #ddd;">{val}</td></tr>\n'
+            for lbl, val in _rows_fc
+        )
+        resumen_fc = (
+            '<h4>Ficha Técnica</h4>\n'
+            '<div style="overflow-x:auto;">\n'
+            '<table style="width:100%;border-collapse:collapse;">\n'
+            '<tbody>\n'
+            '<tr style="background-color:#f2f2f2;">'
+            '<th style="padding:10px;text-align:left;border:1px solid #ddd;">Dato</th>'
+            '<th style="padding:10px;text-align:left;border:1px solid #ddd;">Especificación</th>'
+            '</tr>\n'
+            f'{_rows_html_fc}'
+            '</tbody>\n'
+            '</table>\n'
+            '</div>'
+        )
+
+        # === ASSEMBLE FINAL CONTENT ===
+        return {
+            "h1_title": product_name[:60] if len(product_name) > 60 else product_name,
+            "description_html": description_html,
+            "hook_html": description_html,
+            "technical_specs": tech_specs,
+            "installation_guide": f"<p>La instalación de {product_type} requiere conocimientos técnicos especializados. Recomendamos:</p><ul><li>Verificar compatibilidad antes de comprar</li><li>Seguir el manual de servicio del fabricante</li><li>Realizar el servicio con herramientas adecuadas</li><li>Consultar con nuestros técnicos si tienes dudas</li></ul><p>📞 <strong>Asesoría gratuita:</strong> Contáctanos para guía de instalación paso a paso.</p>",
+            "faq_items": faq_items,
+            "compatible_vehicles": compatible_vehicles,
+            "alt_tags": [f"{url_handle[:50]}.jpg | {product_name}", f"{url_handle[:50]}-instalacion.jpg | Instalación {product_name}"],
+            "short_description": short_description,
+            "meta_title": f"{product_name[:45]} | Example Store"[:60],
+            "meta_description": meta_description,
+            "url_handle": url_handle,
+            "resumen": resumen_fc,
+            "_generation_info": {
+                "source": "rich_fallback_with_data",
+                "web_specs_found": len(web_specs),
+                "search_snippets_used": len(search_snippets),
+                "analysis_suggestions": len(seo_suggestions),
+                "product_type_detected": product_type
+            }
+        }
+
+    # ============ Status & Configuration ============
+
+    async def check_connection(self) -> bool:
+        """Check if the configured LLM is available"""
+        try:
+            if self.provider_name == "ollama":
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(f"{settings.OLLAMA_BASE_URL}/api/tags")
+                    return response.status_code == 200
+            elif self.provider_name == "openai":
+                return bool(settings.OPENAI_API_KEY)
+            elif self.provider_name == "anthropic":
+                return bool(settings.ANTHROPIC_API_KEY)
+            elif self.provider_name == "grok":
+                return bool(settings.XAI_API_KEY)
+            elif self.provider_name == "kimi":
+                return bool(settings.KIMI_API_KEY)
+            return False
+        except:
+            return False
+
+    def get_status(self) -> Dict:
+        """Return current LLM configuration status"""
+        return {
+            "provider": self.provider_name,
+            "model": self._get_current_model(),
+            "configured": self._is_configured()
+        }
+
+    def _get_current_model(self) -> str:
+        if self.provider_name == "ollama":
+            return settings.OLLAMA_MODEL
+        elif self.provider_name == "openai":
+            return settings.OPENAI_MODEL
+        elif self.provider_name == "anthropic":
+            return settings.ANTHROPIC_MODEL
+        elif self.provider_name == "grok":
+            return settings.XAI_MODEL
+        elif self.provider_name == "minimax":
+            return settings.MINIMAX_MODEL
+        elif self.provider_name == "kimi":
+            return settings.KIMI_MODEL
+        return "unknown"
+
+    def _is_configured(self) -> bool:
+        if self.provider_name == "ollama":
+            return True
+        elif self.provider_name == "openai":
+            return bool(settings.OPENAI_API_KEY)
+        elif self.provider_name == "anthropic":
+            return bool(settings.ANTHROPIC_API_KEY)
+        elif self.provider_name == "grok":
+            return bool(settings.XAI_API_KEY)
+        elif self.provider_name == "minimax":
+            return bool(settings.MINIMAX_API_KEY)
+        elif self.provider_name == "kimi":
+            return bool(settings.KIMI_API_KEY)
+        return False
+
+
+llm_service = LLMService()

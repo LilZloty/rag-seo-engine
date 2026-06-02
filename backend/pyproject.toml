@@ -1,0 +1,11 @@
+[project]
+name = "rag-seo-backend"
+version = "1.0.0"
+description = "Example Store SEO & AI Visibility Tracking Backend"
+requires-python = ">=3.10"
+
+[tool.pyre]
+source_directories = ["app"]
+search_path = [".", "D:/Lib/site-packages"]
+site_package_search_strategy = "all"
+binary = "D:\\pyre.exe"

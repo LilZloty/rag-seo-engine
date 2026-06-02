@@ -1,0 +1,28 @@
+# Development overrides — auto-loaded by `docker compose up`
+# Hot reload, debug logs, volume mounts for live editing
+
+services:
+  backend:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend/app:/app/app:ro
+    environment:
+      - ENVIRONMENT=development
+      - LOG_LEVEL=DEBUG
+
+  celery-worker:
+    command: celery -A app.celery_app:celery worker --loglevel=debug --concurrency=1
+    volumes:
+      - ./backend/app:/app/app:ro
+    environment:
+      - ENVIRONMENT=development
+
+  celery-beat:
+    volumes:
+      - ./backend/app:/app/app:ro
+    environment:
+      - ENVIRONMENT=development
+
+  celery-flower:
+    environment:
+      - ENVIRONMENT=development
