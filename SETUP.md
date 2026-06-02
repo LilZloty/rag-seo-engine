@@ -2,6 +2,11 @@
 
 > 💡 For the canonical, up-to-date quickstart see **`STACK.md` §14**. This guide adds onboarding context and troubleshooting around that.
 
+> This setup is the same for any store or industry. It was built for an automotive
+> transmission-parts retailer, but you point it at your own store via `backend/.env`
+> (`STORE_*` + Shopify / API keys) and seed your own knowledge — no code edits. See
+> **README → "Adapting it to your own catalog"** for what to change per industry.
+
 ## Prerequisites
 
 - **Docker Desktop** (for running Postgres, Redis, Qdrant; also runs the backend + frontend + Celery in full-compose mode)

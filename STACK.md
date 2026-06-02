@@ -4,6 +4,11 @@ Deep technical view of the codebase as of 2026-05-19. Pulled from `package.json`
 `requirements.txt`, `docker-compose.yml`, `backend/app/core/config.py`,
 `backend/app/celery_app.py`, and the live source tree — not from memory.
 
+> Built and demonstrated for an automotive transmission-parts store, but the stack
+> below is domain-agnostic — the pipelines stay the same for any catalog; only the
+> store profile (`.env`), knowledge base, prompts and domain taxonomy change. See
+> **README → "Adapting it to your own catalog"**.
+
 ---
 
 ## 1. High-Level Architecture
